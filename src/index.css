@@ -1,0 +1,287 @@
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Tajawal", ui-sans-serif, system-ui, sans-serif;
+}
+  body.printing-active #print-clone-receipt {
+    display: block !important;
+    position: relative !important;
+    width: 100% !important;
+    margin: 0 auto !important;
+    padding: 10px !important;
+    background: white !important;
+  }
+
+
+@layer base {
+  body {
+    @apply font-sans;
+  }
+
+  h1, h2, h3, h4, h5, h6, button, label, .font-bold, .font-semibold, .font-black {
+  }
+
+  svg {
+  }
+
+  svg.lucide-chevron-down {
+    color: #000000 !important;
+    stroke: #000000 !important;
+  }
+
+  select:not(.bg-transparent):not([class*="border-none"]) {
+    appearance: none !important;
+    -webkit-appearance: none !important;
+    -moz-appearance: none !important;
+    background-color: #f8fafc !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 0.75rem !important;
+    padding: 0.55rem 0.75rem !important;
+    padding-left: 2.2rem !important;
+    font-weight: 700 !important;
+    font-size: 0.875rem !important;
+    outline: none !important;
+    background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23000000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: left 0.75rem center !important;
+    background-size: 1.1rem !important;
+  }
+
+  select:not(.bg-transparent):not([class*="border-none"]):focus {
+    box-shadow: 0 0 0 2px #10b981 !important;
+  }
+}
+
+@media print {
+  /* Hide all common UI components */
+  nav, aside, header, footer, button, .no-print, 
+  .fixed, .sticky, [role="dialog"], 
+  .shadow-xl, .shadow-lg, .shadow-md, .bg-slate-900\/40 {
+    display: none !important;
+  }
+
+  /* Body class added by print handler to ensure focus */
+  body.printing-active #app-root-container > *:not(main) {
+    display: none !important;
+  }
+  
+  body.printing-active main > *:not(.report-container-wrapper),
+  body.printing-active main > *:not(#report-result-area) {
+    display: none !important;
+  }
+
+  body {
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* CRITICAL: Fix for cut-off / partial reports printing */
+  html, body, #root, #app-root-container, main, .report-container-wrapper, #report-result-area {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+  }
+
+  .overflow-y-auto, .overflow-x-auto, .overflow-y-scroll, .overflow-x-scroll {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0 !important;
+  }
+
+  #report-result-area {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: white !important;
+  }
+
+  /* Avoid page breaks inside table rows, cards to prevent splitting details ugly */
+  tr, .card, .chart-container {
+    page-break-inside: avoid !important;
+  }
+
+  @page {
+    size: A4;
+    margin: 1.5cm;
+  }
+}
+
+/* Custom print style for single task mobile-optimized voucher */
+@media print {
+  body.printing-task-active #app-root-container > *:not(.task-print-receipt) {
+    display: none !important;
+  }
+  body.printing-task-active .task-print-receipt {
+    display: block !important;
+    width: 100% !important;
+    max-width: 500px !important;
+    margin: 0 auto !important;
+    padding: 20px !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: white !important;
+    color: black !important;
+    page-break-inside: avoid !important;
+  }
+}
+
+/* Custom print style for active task review step */
+@media print {
+  body.printing-review-active #app-root-container > *:not(.task-review-print-receipt) {
+    display: none !important;
+  }
+  body.printing-review-active .task-review-print-receipt {
+    display: block !important;
+    width: 100% !important;
+    max-width: 500px !important;
+    margin: 0 auto !important;
+    padding: 20px !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: white !important;
+    color: black !important;
+    page-break-inside: avoid !important;
+  }
+}
+
+/* Task Modal Templates */
+
+.task-modal-modern {
+  background: #f8fafc;
+  padding: 10px;
+  border-radius: 20px;
+}
+.task-modal-modern input,
+.task-modal-modern textarea,
+.task-modal-modern select,
+.task-modal-modern .react-select__control {
+  border: 1px solid #bae6fd !important;
+  background-color: #f0f9ff !important;
+  border-radius: 16px !important;
+  box-shadow: 0 4px 6px -1px rgba(186, 230, 253, 0.3) !important;
+  color: #0369a1 !important;
+  font-size: 13px !important;
+  padding: 10px !important;
+}
+.task-modal-modern label,
+.task-modal-modern .text-\[10px\] {
+  color: #0284c7 !important;
+  font-size: 11px !important;
+  font-weight: 900 !important;
+  margin-bottom: 4px !important;
+}
+
+.task-modal-elegant {
+  background: #ffffff;
+}
+.task-modal-elegant input,
+.task-modal-elegant textarea,
+.task-modal-elegant select,
+.task-modal-elegant .react-select__control {
+  border: 2px solid #334155 !important;
+  background-color: #f8fafc !important;
+  border-radius: 6px !important;
+  color: #0f172a !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  box-shadow: 2px 2px 0px #475569 !important;
+  padding: 8px 12px !important;
+  transition: all 0.2s ease !important;
+}
+.task-modal-elegant input:focus,
+.task-modal-elegant textarea:focus {
+  transform: translate(2px, 2px);
+  box-shadow: 0px 0px 0px #475569 !important;
+}
+.task-modal-elegant label,
+.task-modal-elegant .text-\[10px\] {
+  color: #334155 !important;
+  font-size: 12px !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+}
+
+.task-modal-focus {
+  background: #fef2f2;
+  border-left: 4px solid #ef4444;
+  padding-left: 12px;
+}
+.task-modal-focus input,
+.task-modal-focus textarea,
+.task-modal-focus select,
+.task-modal-focus .react-select__control {
+  border: none !important;
+  border-bottom: 3px solid #fca5a5 !important;
+  background-color: transparent !important;
+  border-radius: 0 !important;
+  color: #991b1b !important;
+  font-size: 16px !important;
+  font-weight: 800 !important;
+  padding: 12px 4px !important;
+}
+.task-modal-focus input:focus,
+.task-modal-focus textarea:focus {
+  border-bottom-color: #b91c1c !important;
+  background-color: #fee2e2 !important;
+}
+.task-modal-focus label,
+.task-modal-focus .text-\[10px\] {
+  color: #b91c1c !important;
+  font-size: 14px !important;
+  font-weight: 900 !important;
+}
+
+/* Global style to clear inputs */
+.global-input-clear-btn {
+  position: absolute;
+  left: 8px; /* For RTL inputs, place on left */
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  color: #94a3b8; /* slate-400 */
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+  z-index: 50;
+}
+
+.global-input-clear-btn:hover {
+  color: #e11d48; /* rose-600 */
+  background-color: #ffe4e6; /* rose-100 */
+  border-color: #fca5a5; /* rose-300 */
+}
+
+/* For Textarea, align it near the top */
+textarea ~ .global-input-clear-btn {
+  top: 10px;
+  transform: none;
+}
+
+/* Hide clear button in prints */
+@media print {
+  .global-input-clear-btn {
+    display: none !important;
+  }
+}
+
+@media print {
+  body.printing-active #app-root-container {
+    display: none !important;
+  }
+}
