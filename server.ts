@@ -146,19 +146,32 @@ async function startServer() {
       const availableModels = ['gemini-3.6-flash', 'gemini-3.8-flash'];
       let modelToUse = 'gemini-3.6-flash';
       
-      const isDetailed = mode === 'detailed';
-      const systemPrompt = "أنت المساعد الذكي والخبير لتطبيق (الفيصل للصيانة)، تعمل بمحرك جيميناي (Gemini). تمتلك وعياً كاملاً بكافة البيانات، الخيارات، والعمليات في النظام بناءً على السياق المرسل إليك (المهام، العملاء، الحسابات النقدية والخزائن، المركز المالي والأصول، المخزون، والديون). يمكنك تنفيذ المهام المعقدة، التعلم من البيانات الجديدة المرفقة، وتنفيذ كل الأوامر بدقة، بما فيها خيارات الاستعادة أو التراجع عبر استدعاء undoAction. استجب باحترافية، موضوعية، وبأعلى سرعة ودقة مثل جيميناي.";
+      const isProfessional = mode !== 'detailed';
+      const systemPrompt = isProfessional
+        ? `أنت (مساعد الفيصل المحترف) - الخبير الصوتي والذكاء الاصطناعي لنظام "الفيصل للصيانة".
+تمتاز بالقدرة العالية جداً على فهم مقصود وسياق المستخدم مهما اختلف ترتيب الكلمات، أو طال النص أو قصر، أو تم ذكر أسماء العملاء بشكل جزئي أو مختصر بدون التقيد بنص محدد للأوامر.
+أمثلة جليّة للفهم المرن والمرونة العالية:
+- إذا قال المستخدم "اضف دفعة حساب للمهمة الاخيرة للعميل فلان" أو "اضف مبلغ لفلان" أو "سجل 5000 بحساب المهمة الأخيرة لأحمد"، استدعِ addDeposit مع customerName المذكور (أو الجزئي) و amount والمؤشر isLastTask=true.
+- إذا طلب تصفية أو فتح أو تعديل أو استعلام بأي جملة عامية أو عامة، استخرج الأسماء والأرقام والعمليات بدقة واستدعِ الدالة المناسبة فوراً.
+نمطك الحالي هو [المساعد المحترف]: تتميز بالسرعة القصوى، والإجابة المباشرة الموجزة، والتنفيذ الفوري دون مقدمات أو حشو.
+القواعد الصارمة لإجابتك:
+1. إجابة مباشرة وحاسمة: قدم الرقم، أو المعلومة، أو نتيجة الإجراء فوراً وبأقصر عبارة مفيدة بدون أي ترحيب، مجاملة، أو ديباجات.
+2. اكتب باللغة العربية الفصيحة الصافية وبدون أي حركات تشكيل لضمان نطقها بسلاسة تامة.`
+        : `أنت المساعد الذكي والخبير الشامل لتطبيق (الفيصل للصيانة).
+تفهم القصد الحقيقي والضمني للمستخدم مهما اختلف ترتيب الكلمات في الجملة أو تنوعت الصيغ والأساليب بدون التقيد بنص ثابت.
+تعتمد على سياق البيانات المحفوظة محلياً (المهام، العملاء، الحسابات النقدية والخزائن، المركز المالي، المخزون، والديون).
+اكتب باللغة العربية الفصيحة الصافية وبدون حركات تشكيل لضمان جودة النطق بمحرك الهاتف.`;
 
       const toolsList = [{
   functionDeclarations: [
     { name: "searchQuery", description: "البحث في التطبيق عبر شريط البحث السريع", parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING, description: "النص المراد البحث عنه" } }, required: ["query"] } },
     { name: "addTask", description: "أضف مهمة صيانة جديدة.", parameters: { type: Type.OBJECT, properties: { customerName: { type: Type.STRING }, deviceType: { type: Type.STRING }, brand: { type: Type.STRING }, issue: { type: Type.STRING }, cost: { type: Type.NUMBER } }, required: ["customerName", "deviceType", "issue"] } },
-    { name: "updateTaskStatus", description: "تحديث حالة مهمة صيانة موجودة.", parameters: { type: Type.OBJECT, properties: { taskId: { type: Type.NUMBER }, status: { type: Type.STRING } }, required: ["taskId", "status"] } },
+    { name: "updateTaskStatus", description: "تحديث حالة مهمة صيانة موجودة.", parameters: { type: Type.OBJECT, properties: { taskId: { type: Type.NUMBER }, customerName: { type: Type.STRING }, status: { type: Type.STRING } }, required: ["status"] } },
     { name: "deleteTask", description: "حذف مهمة صيانة نهائياً.", parameters: { type: Type.OBJECT, properties: { taskId: { type: Type.NUMBER } }, required: ["taskId"] } },
-    { name: "updateTaskCost", description: "تحديث أو تعديل التكلفة التقديرية لمهمة.", parameters: { type: Type.OBJECT, properties: { taskId: { type: Type.NUMBER }, cost: { type: Type.NUMBER } }, required: ["taskId", "cost"] } },
-    { name: "openCustomerTask", description: "البحث عن مهام عميل معين لفتح إحداها. مفيد إذا طلب المستخدم فتح أو إظهار أو التعديل على جهاز العميل. يمكنك تحديد رقم المهمة في choice إذا طلبها صراحة.", parameters: { type: Type.OBJECT, properties: { customerName: { type: Type.STRING }, choice: { type: Type.STRING, description: "اختياري: الترتيب أو الرقم مثل 1 أو 'الأولى'" } }, required: ["customerName"] } },
+    { name: "updateTaskCost", description: "تحديث أو تعديل التكلفة التقديرية لمهمة.", parameters: { type: Type.OBJECT, properties: { taskId: { type: Type.NUMBER }, customerName: { type: Type.STRING }, cost: { type: Type.NUMBER } }, required: ["cost"] } },
+    { name: "openCustomerTask", description: "البحث عن مهام عميل معين لفتح إحداها. مفيد إذا طلب المستخدم فتح أو إظهار أو التعديل على جهاز العميل. يمكنك تحديد رقم المهمة في choice إذا طلبها صراحة.", parameters: { type: Type.OBJECT, properties: { customerName: { type: Type.STRING }, choice: { type: Type.STRING, description: "اختياري: الترتيب أو الرقم مثل 1 أو 'الأولى' أو 'الأخيرة'" } }, required: ["customerName"] } },
     { name: "addCustomer", description: "إضافة عميل جديد.", parameters: { type: Type.OBJECT, properties: { name: { type: Type.STRING }, phone: { type: Type.STRING } }, required: ["name"] } },
-    { name: "addDeposit", description: "إضافة دفعة مقدم لمهمة صيانة.", parameters: { type: Type.OBJECT, properties: { taskId: { type: Type.NUMBER }, amount: { type: Type.NUMBER } }, required: ["taskId", "amount"] } },
+    { name: "addDeposit", description: "إضافة دفعة حساب أو مبلغ مقدم لمهمة صيانة أو لعميل معين (مثال: اضف دفعة حساب للمهمة الاخيرة للعميل فلان، أو اضف مبلغ لفلان).", parameters: { type: Type.OBJECT, properties: { taskId: { type: Type.NUMBER, description: "رقم المهمة الاختياري إذا عرف الرقم" }, customerName: { type: Type.STRING, description: "اسم العميل كامل أو جزئي (مثل: أحمد، فلان، الفايصل)" }, amount: { type: Type.NUMBER, description: "المبلغ المراد إضافته" }, isLastTask: { type: Type.BOOLEAN, description: "تكون true إذا أشار المستخدم للمهمة الأخيرة للعميل" } }, required: ["amount"] } },
     { name: "addDeviceModel", description: "إضافة موديل جديد لنوع جهاز.", parameters: { type: Type.OBJECT, properties: { deviceType: { type: Type.STRING }, brand: { type: Type.STRING }, modelName: { type: Type.STRING } }, required: ["deviceType", "modelName"] } },
     { name: "openTab", description: "الانتقال إلى قسم أو شاشة محددة في التطبيق.", parameters: { type: Type.OBJECT, properties: { tabId: { type: Type.STRING, description: "القسم: tasks, customers, inventory, accounting, reports, settings, notes" }, filterQuery: { type: Type.STRING } }, required: ["tabId"] } },
     { name: "setTaskReminder", description: "ضبط تنبيه.", parameters: { type: Type.OBJECT, properties: { taskId: { type: Type.NUMBER }, amount: { type: Type.NUMBER }, unit: { type: Type.STRING } }, required: ["amount", "unit"] } },
@@ -166,16 +179,38 @@ async function startServer() {
     { name: "undoAction", description: "التراجع أو الاستعادة عن الإجراء الأخير (كإضافة عميل، إضافة مهمة، تعديل، ملاحظة)", parameters: { type: Type.OBJECT, properties: {} } },
     { name: "shareToWhatsApp", description: "مشاركة تفاصيل المهمة عبر الواتساب.", parameters: { type: Type.OBJECT, properties: { taskId: { type: Type.NUMBER }, target: { type: Type.STRING, description: "جهة المشاركة customer أو faisali" } }, required: ["taskId"] } },
     { name: "countTasks", description: "معرفة عدد المهام الكلية، المعلقة وقيد التنفيذ.", parameters: { type: Type.OBJECT, properties: {} } },
-    { name: "getFinancialSummary", description: "معرفة ملخص مالي للحسابات المقبوضات والمصروفات والأرباح.", parameters: { type: Type.OBJECT, properties: {} } },
+    { name: "getFinancialSummary", description: "معرفة ملخص مالي للحسابات وإيرادات ومصروفات وأرباح اليوم والنشاط العام.", parameters: { type: Type.OBJECT, properties: {} } },
+    { name: "getReadyTasksSummary", description: "معرفة واستخراج الأجهزة والمهام الجاهزة للتسليم حالياً وأسماء أصحابها وتفاصيلها.", parameters: { type: Type.OBJECT, properties: {} } },
+    { name: "getDailySummary", description: "استخراج ملخص وتقرير أعمال اليوم الشاملة بدقة وسرعة.", parameters: { type: Type.OBJECT, properties: {} } },
     { name: "getBoxBalance", description: "معرفة رصيد الخزينة والصندوق المتاح حالياً بالريال اليمني.", parameters: { type: Type.OBJECT, properties: {} } },
     { name: "getDebtsSummary", description: "معرفة إجمالي ديون ومستحقات العملاء المتبقية على مهام الصيانة.", parameters: { type: Type.OBJECT, properties: {} } },
     { name: "getFinancialCenterDetails", description: "معرفة تفاصيل ومؤشرات المركز المالي، إجمالي الأصول الرأسمالية، صافي رأس المال، السيولة، قيمة المخزون، ديون العملاء والالتزامات.", parameters: { type: Type.OBJECT, properties: {} } },
     { name: "listCashAccounts", description: "عرض كافة الحسابات النقدية والخزائن والصناديق وأرصدتها الحالية.", parameters: { type: Type.OBJECT, properties: {} } },
     { name: "listDebts", description: "عرض الديون والالتزامات القائمة للموردين والممولين والمبالغ المتبقية.", parameters: { type: Type.OBJECT, properties: {} } },
     { name: "getInventorySummary", description: "معرفة إحصائيات قطع الغيار والمخزون والأصناف المتاحة والمنخفضة.", parameters: { type: Type.OBJECT, properties: {} } },
+    { name: "updateTaskDetails", description: "تعديل تفاصيل مهمة صيانة كالعطل أو الجهاز أو التكلفة أو الملاحظات.", parameters: { type: Type.OBJECT, properties: { taskId: { type: Type.NUMBER }, issue: { type: Type.STRING }, deviceType: { type: Type.STRING }, brand: { type: Type.STRING }, cost: { type: Type.NUMBER } }, required: ["taskId"] } },
+    { name: "updateCustomer", description: "تعديل بيانات عميل موجود كهاتفه أو تصنيفه أو اسمه.", parameters: { type: Type.OBJECT, properties: { customerId: { type: Type.NUMBER }, name: { type: Type.STRING }, phone: { type: Type.STRING }, classification: { type: Type.STRING } }, required: ["name"] } },
+    { name: "addInventoryItem", description: "إضافة صنف أو قطعة غيار جديدة للمخزون.", parameters: { type: Type.OBJECT, properties: { name: { type: Type.STRING }, category: { type: Type.STRING }, sellingPrice: { type: Type.NUMBER }, costPrice: { type: Type.NUMBER }, stock: { type: Type.NUMBER } }, required: ["name"] } },
+    { name: "updateInventoryItem", description: "تعديل كمية أو سعر صنف في المخزون.", parameters: { type: Type.OBJECT, properties: { itemId: { type: Type.NUMBER }, name: { type: Type.STRING }, stock: { type: Type.NUMBER }, sellingPrice: { type: Type.NUMBER } } } },
+    { name: "deleteInventoryItem", description: "حذف صنف من المخزون.", parameters: { type: Type.OBJECT, properties: { itemId: { type: Type.NUMBER }, name: { type: Type.STRING } } } },
+    { name: "deleteCustomer", description: "حذف عميل من النظام.", parameters: { type: Type.OBJECT, properties: { customerId: { type: Type.NUMBER }, name: { type: Type.STRING } } } },
+    { name: "addFinancialTransaction", description: "تسجيل حركة مالية جديدة (إيراد، قبض، مصروف، أو صرف).", parameters: { type: Type.OBJECT, properties: { type: { type: Type.STRING, description: "income أو expense" }, amount: { type: Type.NUMBER }, description: { type: Type.STRING }, category: { type: Type.STRING } }, required: ["type", "amount", "description"] } },
+    { name: "addDebtAccount", description: "تسجيل دين أو التزام جديد لمورد أو ممول.", parameters: { type: Type.OBJECT, properties: { creditorName: { type: Type.STRING }, totalAmount: { type: Type.NUMBER }, purpose: { type: Type.STRING }, currency: { type: Type.STRING } }, required: ["creditorName", "totalAmount"] } },
+    { name: "payDebt", description: "سداد جزء أو كامل دين مورد.", parameters: { type: Type.OBJECT, properties: { creditorName: { type: Type.STRING }, amount: { type: Type.NUMBER } }, required: ["creditorName", "amount"] } },
+    { name: "openWindow", description: "فتح أو إغلاق أي نافذة أو نموذج بالصوت دون لمس الشاشة (مثل: newTask, newCustomer, newInventory, accounts, debts, flashSettings, voiceSettings, backup, quickNotes, closeModals).", parameters: { type: Type.OBJECT, properties: { windowName: { type: Type.STRING, description: "اسم النافذة: newTask, newCustomer, newInventory, accounts, debts, flashSettings, voiceSettings, backup, quickNotes, closeModals" } }, required: ["windowName"] } },
+    { name: "toggleSetting", description: "تفعيل أو إلغاء تفعيل أي خيار أو ميزة في النظام بالصوت دون لمس الشاشة (مثل: flashTicker للشريط الفلاشي، darkMode للوضع الليلي، voiceSpeech للنطق الصوتي، assistantIcon لأيقونة المساعد).", parameters: { type: Type.OBJECT, properties: { setting: { type: Type.STRING, description: "اسم الإعداد: flashTicker أو darkMode أو voiceSpeech أو assistantIcon" }, enable: { type: Type.BOOLEAN, description: "true للتفعيل والتشغيل، false لإلغاء التفعيل والإيقاف" } }, required: ["setting", "enable"] } },
+    { name: "setFlashTaskRange", description: "تغيير نطاق عرض مهام الواجهة الفلاشية (1day لليوم القادم، 2days ليومين، 3days لثلاثة، 4days لأربعة، 1week لأسبوع، 1month لشهر).", parameters: { type: Type.OBJECT, properties: { range: { type: Type.STRING, description: "النطاق: 1day, 2days, 3days, 4days, 1week, 1month" } }, required: ["range"] } },
+    { name: "filterTasks", description: "فلترة وتصفية عرض قائمة المهام بحسب الحالة (معلقة، قيد التنفيذ، جاهزة، مسلمة، ملغية، الكل).", parameters: { type: Type.OBJECT, properties: { status: { type: Type.STRING } }, required: ["status"] } },
+    { name: "addCashAccount", description: "إضافة حساب نقدي أو خزينة أو صندوق جديد في الحسابات.", parameters: { type: Type.OBJECT, properties: { name: { type: Type.STRING }, type: { type: Type.STRING, description: "cashbox أو vault أو bank أو wallet" }, balance: { type: Type.NUMBER }, currency: { type: Type.STRING } }, required: ["name"] } },
     { name: "getTaskDetails", description: "معرفة تفاصيل أو حالة مهمة صيانة معينة بناءً على رقمها.", parameters: { type: Type.OBJECT, properties: { taskId: { type: Type.NUMBER } }, required: ["taskId"] } },
     { name: "listCustomers", description: "سرد العملاء البارزين أو معرفة عددهم.", parameters: { type: Type.OBJECT, properties: {} } },
-    { name: "triggerDriveBackup", description: "فتح نافذة أو تفعيل أخذ نسخة احتياطية (باك اب).", parameters: { type: Type.OBJECT, properties: {} } }
+    { name: "triggerDriveBackup", description: "فتح نافذة أو تفعيل أخذ نسخة احتياطية (باك اب).", parameters: { type: Type.OBJECT, properties: {} } },
+    { name: "addDropdownOption", description: "إضافة خيار جديد لإحدى القوائم المنسدلة في نافذة المهمة (مثل خيارات المشكلة، الفحص، الحالة، موقع الحفظ، الفنيين، أو الأصناف).", parameters: { type: Type.OBJECT, properties: { listName: { type: Type.STRING, description: "اسم القائمة: issueOptions أو inspectionOptions أو statusOptions أو storageLocations أو technicianOptions أو inventoryCategoryOptions" }, optionValue: { type: Type.STRING, description: "نص الخيار الجديد المراد إضافته للقائمة" } }, required: ["listName", "optionValue"] } },
+    { name: "addCustomerPhone", description: "إضافة أو تحديث رقم هاتف لعميل.", parameters: { type: Type.OBJECT, properties: { customerName: { type: Type.STRING }, phone: { type: Type.STRING } }, required: ["customerName", "phone"] } },
+    { name: "updateCustomerTaskStatus", description: "تحديث وتغيير حالة مهمة العميل مباشرة باسم العميل بالحالة الجديدة.", parameters: { type: Type.OBJECT, properties: { customerName: { type: Type.STRING }, status: { type: Type.STRING } }, required: ["customerName", "status"] } },
+    { name: "exportTaskOrAccountDocument", description: "إخراج أو طباعة مستند أو صورة إيصال لمهمة صيانة أو تقرير كشف حساب لعميل/حساب.", parameters: { type: Type.OBJECT, properties: { targetType: { type: Type.STRING, description: "نوع المستند: task أو account" }, identifier: { type: Type.STRING, description: "رقم المهمة أو اسم العميل/الحساب" } }, required: ["targetType", "identifier"] } },
+    { name: "getCustomerData", description: "استخراج جميع البيانات والمدخلات والمهام والهواتف والحسابات الخاصة بعميل معين.", parameters: { type: Type.OBJECT, properties: { customerName: { type: Type.STRING } }, required: ["customerName"] } },
+    { name: "getInventoryItemData", description: "استخراج تفاصيل مدخلات وبيانات صنف معين في المستودع والمخزون.", parameters: { type: Type.OBJECT, properties: { itemName: { type: Type.STRING } }, required: ["itemName"] } }
   ]
 }];
 
@@ -218,7 +253,7 @@ async function startServer() {
   // Voice Audio Transcription with Gemini (Arabic speech-to-text fallback)
   app.post('/api/assistant/transcribe', async (req, res) => {
     try {
-      const { audioData, mimeType } = req.body;
+      const { audioData, mimeType, isNumeric } = req.body;
       if (!audioData) {
         return res.status(400).json({ error: 'audioData is required' });
       }
@@ -229,8 +264,12 @@ async function startServer() {
       }
 
       const aiInstance = new GoogleGenAI({ apiKey });
-      const availableModels = ['gemini-3.6-flash', 'gemini-3.8-flash'];
+      const availableModels = ['gemini-2.5-flash', 'gemini-2.0-flash'];
       let transcript = '';
+
+      const promptText = isNumeric
+        ? 'أنت محول صوتي فائق الدقة ومحول أرقام مالي. حوّل هذا المقطع الصوتي العربي بدقة إلى رقم حسابي فقط بالأرقام الإنجليزية (مثل: 5000 أو 250 أو 15.5) بدون أي كلمات أو عملات أو نصوص إضافية أو علامات تنصيص. إذا لم يكن هناك رقم أو كلام واضح، أعد نصاً فارغاً.'
+        : 'أنت محول صوتي فائق الدقة. حوّل هذا المقطع الصوتي العربي بدقة إلى نص مكتوب فقط بدون أي مقدمات أو تعليقات أو شروحات إضافية أو علامات تنصيص. إذا لم يكن هناك كلام واضح، أعد نصاً فارغاً.';
 
       for (const m of availableModels) {
         try {
@@ -247,7 +286,7 @@ async function startServer() {
                     }
                   },
                   {
-                    text: 'أنت محول صوتي فائق الدقة. حوّل هذا المقطع الصوتي العربي بدقة إلى نص مكتوب فقط بدون أي مقدمات أو تعليقات أو شروحات إضافية أو علامات تنصيص. إذا لم يكن هناك كلام واضح، أعد نصاً فارغاً.'
+                    text: promptText
                   }
                 ]
               }
@@ -291,8 +330,8 @@ async function startServer() {
       // Truncate to safe length for single utterance (max 280 chars for smooth speech chunk)
       const spokenChunk = clean.slice(0, 280);
 
-      // Fetch natural Arabic audio stream from high-fidelity TTS
-      const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ar&client=tw-ob&q=${encodeURIComponent(spokenChunk)}`;
+      // Fetch natural Arabic audio stream from high-fidelity TTS (client=gtx generates rich Arabic MP3 audio)
+      const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ar&client=gtx&q=${encodeURIComponent(spokenChunk)}`;
       const audioRes = await fetch(ttsUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-N986B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Mobile Safari/537.36'
@@ -304,7 +343,12 @@ async function startServer() {
       }
 
       const buffer = Buffer.from(await audioRes.arrayBuffer());
+      if (buffer.length < 100) {
+        return res.status(502).send('Received empty audio payload');
+      }
+
       res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Content-Length', buffer.length.toString());
       res.setHeader('Cache-Control', 'public, max-age=86400');
       res.send(buffer);
     } catch (err: any) {

@@ -50,18 +50,21 @@ export function formatAmount(amountInUSD: number | undefined | null, targetCurre
   else if (normTo === 'RY' || normTo === 'YER' || normTo === 'ريال يمني') converted = amountInUSD * ryRate;
   else if (normTo === 'USD' || normTo === 'دولار') converted = amountInUSD;
   
-  if (normTo === 'USD' || normTo === 'دولار') {
-    return Number(converted.toFixed(1)).toLocaleString();
+  // بالنسبة للريال السعودي والدولار: التقريب لعشرة فقط (أقرب خانة عشرية واحدة 0.1)
+  if (normTo === 'SAR' || normTo === 'ريال سعودي' || normTo === 'USD' || normTo === 'دولار') {
+    const rounded = Math.round(converted * 10) / 10;
+    return rounded.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 });
   }
   
+  // بالنسبة للريال اليمني: لا يتم عرض التقريب لألف في المبالغ، بل يُعرض المبلغ كاملاً
   return Math.round(converted).toLocaleString();
 }
 
 export function convertAndRound(amount: number | undefined | null, fromCurrency: Currency | string | undefined | null, toCurrency: Currency | string | undefined | null, rates: ExchangeRates): number {
   const converted = convertCurrency(amount, fromCurrency, toCurrency, rates);
   const normTo = (!toCurrency || toCurrency === 'YER' || toCurrency === 'ريال يمني') ? 'RY' : toCurrency;
-  if (normTo === 'USD' || normTo === 'دولار') {
-    return Number(converted.toFixed(1));
+  if (normTo === 'SAR' || normTo === 'ريال سعودي' || normTo === 'USD' || normTo === 'دولار') {
+    return Math.round(converted * 10) / 10;
   }
   return Math.round(converted);
 }

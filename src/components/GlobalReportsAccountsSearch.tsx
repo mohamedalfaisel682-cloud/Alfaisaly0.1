@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Customer, CashAccount, InventoryItem, Transaction, Currency, ExchangeRates } from '../types';
-import { Search, X, User, Building2, Wallet, ChevronRight, Package, StickyNote, CreditCard, ArrowDownLeft, ArrowUpRight, ArrowDownAZ, Clock, Landmark } from 'lucide-react';
+import { Search, X, User, Building2, Wallet, ChevronRight, Package, StickyNote, CreditCard, ArrowDownLeft, ArrowUpRight, ArrowDownAZ, Clock, Landmark, BookmarkCheck } from 'lucide-react';
 import { cn, formatAmount } from '../lib/utils';
+import { VoiceInputButton } from './VoiceInputButton';
 
 export interface FinancialMetricItem {
   id: string;
@@ -58,8 +59,20 @@ export const GlobalReportsAccountsSearch: React.FC<GlobalReportsAccountsSearchPr
 }) => {
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
-  const [sortBy, setSortBy] = useState<'name' | 'latest'>('name');
-  const [activeCategory, setActiveCategory] = useState<'all' | 'customer' | 'account' | 'financial_center' | 'inventory' | 'note' | 'transaction'>('all');
+  const [sortBy, setSortBy] = useState<'name' | 'latest'>(() => {
+    return (localStorage.getItem('global_search_sort_default') as any) || 'name';
+  });
+  const [activeCategory, setActiveCategory] = useState<'all' | 'customer' | 'account' | 'financial_center' | 'inventory' | 'note' | 'transaction'>(() => {
+    return (localStorage.getItem('global_search_category_default') as any) || 'all';
+  });
+  const [savedSearchDefaultFeedback, setSavedSearchDefaultFeedback] = useState(false);
+
+  const handleSaveSearchDefault = () => {
+    localStorage.setItem('global_search_sort_default', sortBy);
+    localStorage.setItem('global_search_category_default', activeCategory);
+    setSavedSearchDefaultFeedback(true);
+    setTimeout(() => setSavedSearchDefaultFeedback(false), 2200);
+  };
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -271,33 +284,44 @@ export const GlobalReportsAccountsSearch: React.FC<GlobalReportsAccountsSearchPr
           }}
           onFocus={() => setIsOpen(true)}
           placeholder={placeholder || defaultPlaceholder}
-          className="w-full pr-10 pl-16 py-2.5 bg-slate-50 hover:bg-slate-100/80 focus:bg-white text-slate-800 text-xs sm:text-sm font-bold rounded-2xl border border-slate-200/90 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15 outline-none transition-all shadow-xs"
+          className="w-full pr-10 pl-24 py-2.5 bg-slate-50 hover:bg-slate-100/80 focus:bg-white text-slate-800 text-xs sm:text-sm font-bold rounded-2xl border border-slate-200/90 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/15 outline-none transition-all shadow-xs"
         />
 
-        <div className="absolute left-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+        <div className="absolute left-0 top-0 bottom-0 h-full flex items-center z-10 overflow-hidden rounded-l-2xl">
+          <span className="hidden sm:inline-block px-2 text-slate-500 text-[10px] font-black">
+            بحث شامل
+          </span>
+          <VoiceInputButton
+            target="global-reports-search"
+            onResult={(text) => {
+              setQuery(text);
+              onQueryChange?.(text);
+              if (!isOpen) setIsOpen(true);
+            }}
+            className="p-1 text-slate-400 hover:text-emerald-600 rounded-lg"
+            buttonTitle="تحويل الكلام إلى نص"
+          />
           {query && (
             <button
               type="button"
               onClick={() => {
                 setQuery('');
                 onQueryChange?.('');
-                inputRef.current?.focus();
+                setIsOpen(false);
+                inputRef.current?.blur();
               }}
-              className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 transition-colors"
-              title="مسح البحث"
+              className="h-full aspect-square bg-red-500 hover:bg-red-600 active:bg-red-700 text-white transition-all cursor-pointer flex items-center justify-center shrink-0 font-bold"
+              title="مسح النص وإلغاء المدخلات بنقرة واحدة"
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="w-4 h-4 stroke-[3]" />
             </button>
           )}
-          <span className="hidden sm:inline-block px-1.5 py-0.5 bg-slate-200/60 text-slate-500 text-[10px] font-black rounded-md">
-            بحث شامل
-          </span>
         </div>
       </div>
 
       {/* Dropdown Results & Suggestions */}
       {isOpen && (
-        <div className="absolute right-0 left-0 top-full mt-1.5 bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-h-[75vh] sm:max-h-[520px] flex flex-col z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="absolute right-0 left-0 top-full mt-1.5 bg-white rounded-2xl border-2 border-emerald-500/80 shadow-2xl overflow-hidden max-h-[75vh] sm:max-h-[520px] flex flex-col z-[99999] animate-in fade-in slide-in-from-top-2 duration-150">
           {/* Header with categories priority chips */}
           <div className="p-2.5 bg-slate-50/90 border-b border-slate-100 flex items-center justify-between gap-2 overflow-x-auto no-scrollbar">
             <div className="flex items-center gap-1.5 text-[11px] font-black shrink-0">
@@ -425,6 +449,23 @@ export const GlobalReportsAccountsSearch: React.FC<GlobalReportsAccountsSearchPr
                   </>
                 )}
               </button>
+
+              {/* Save as default suggestions filter & sort */}
+              <button
+                type="button"
+                onClick={handleSaveSearchDefault}
+                className={cn(
+                  "flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-black transition-all cursor-pointer border select-none",
+                  savedSearchDefaultFeedback
+                    ? "bg-emerald-600 text-white border-emerald-700 shadow-xs scale-105"
+                    : "bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200/80"
+                )}
+                title="حفظ تصنيف وترتيب نتائج البحث كافتراضي لجميع مربعات البحث"
+              >
+                <BookmarkCheck className="w-3.5 h-3.5 text-amber-700" />
+                <span className="hidden sm:inline">{savedSearchDefaultFeedback ? '✓ تم الحفظ' : 'حفظ كافتراضي'}</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setIsOpen(false)}

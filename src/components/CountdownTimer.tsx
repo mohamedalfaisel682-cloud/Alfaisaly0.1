@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { cn } from '../lib/utils';
+import { parseExecutionTimeToDate } from '../lib/dateUtils';
 
 export const CountdownTimer = ({ targetDate, className }: { targetDate: string, className?: string }) => {
   const [timeLeft, setTimeLeft] = useState('');
 
   useEffect(() => {
     const calculateTimeLeft = () => {
-      const difference = new Date(targetDate).getTime() - new Date().getTime();
+      const parsedDate = parseExecutionTimeToDate(targetDate);
+      if (!parsedDate) return '';
+      const difference = parsedDate.getTime() - new Date().getTime();
       if (difference <= 0) return 'انتهى الوقت';
 
       const hours = Math.floor((difference / (1000 * 60 * 60)) % 24);

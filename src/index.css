@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Alexandria:wght@400;600;700;800;900&family=Almarai:wght@400;700;800&family=Amiri:ital,wght@0,400;0,700;1,400&family=Cairo:wght@400;600;700;800;900&family=Changa:wght@400;600;700;800&family=Fira+Code:wght@400;600;700&family=IBM+Plex+Sans+Arabic:wght@400;600;700&family=Reem+Kufi:wght@400;600;700&family=Tajawal:wght@300;400;500;700;800;900&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -17,6 +17,15 @@
 @layer base {
   body {
     @apply font-sans;
+  }
+
+  /* Disable native webkit search cancel button to avoid duplicate clear X icons */
+  input::-webkit-search-cancel-button,
+  input::-webkit-search-decoration,
+  input::-webkit-search-results-button,
+  input::-webkit-search-results-decoration {
+    -webkit-appearance: none !important;
+    appearance: none !important;
   }
 
   h1, h2, h3, h4, h5, h6, button, label, .font-bold, .font-semibold, .font-black {
@@ -285,3 +294,64 @@ textarea ~ .global-input-clear-btn {
     display: none !important;
   }
 }
+
+/* Safe Area Insets & Touch Optimization for Samsung Note 20 Ultra (Android 13 / Capacitor) */
+:root {
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 16px);
+  --safe-area-inset-left: env(safe-area-inset-left, 0px);
+  --safe-area-inset-right: env(safe-area-inset-right, 0px);
+}
+
+.pb-safe {
+  padding-bottom: max(16px, env(safe-area-inset-bottom, 16px)) !important;
+}
+
+.pt-safe {
+  padding-top: max(8px, env(safe-area-inset-top, 0px)) !important;
+}
+
+.mb-safe {
+  margin-bottom: max(16px, env(safe-area-inset-bottom, 16px)) !important;
+}
+
+/* Ensure sticky footers & bottom modal action buttons do not clash with Android gesture bar */
+.safe-sticky-bottom {
+  padding-bottom: max(12px, calc(env(safe-area-inset-bottom, 16px) + 6px)) !important;
+}
+
+/* Touch feedback helper */
+.touch-press-feedback:active {
+  transform: scale(0.97);
+  transition: transform 0.1s ease;
+}
+
+/* Mobile-first: Prevent horizontal scrolling across all windows, pages, modals, and lists */
+html, body {
+  overflow-x: hidden !important;
+  max-width: 100vw !important;
+  width: 100% !important;
+  overscroll-behavior-x: none !important;
+  touch-action: pan-y pinch-zoom;
+}
+
+#root, #app-root-container, main, section, .page-container, #accounts-manager-root {
+  overflow-x: hidden !important;
+  max-width: 100vw !important;
+  width: 100% !important;
+}
+
+/* Modals, sheets & dialogs constraint to only scroll vertically */
+[role="dialog"], .modal-content-wrapper, .modal-body-scroll {
+  max-width: 100vw !important;
+  overflow-x: hidden !important;
+  overscroll-behavior-x: none !important;
+}
+
+/* Lock tables from expanding parent containers horizontally */
+.mobile-ledger-table {
+  width: 100% !important;
+  table-layout: fixed !important;
+  word-break: break-word !important;
+}
+

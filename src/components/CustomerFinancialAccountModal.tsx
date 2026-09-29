@@ -29,7 +29,9 @@ import {
   TrendingUp,
   TrendingDown
 } from 'lucide-react';
-import { Task, Customer, Transaction, Currency, ExchangeRates } from '../types';
+import toast from 'react-hot-toast';
+import { VoiceInputButton } from './VoiceInputButton';
+import { Task, Customer, Transaction, Currency, ExchangeRates, CashAccount } from '../types';
 import { cn, getInUSD, formatAmount, normalizeName } from '../lib/utils';
 import { ExportToolbar } from './ExportToolbar';
 
@@ -39,6 +41,7 @@ interface CustomerFinancialAccountModalProps {
   customerName: string;
   customerPhone?: string;
   customers: Customer[];
+  cashAccounts?: CashAccount[];
   tasks: Task[];
   transactions: Transaction[];
   systemCurrency: Currency;
@@ -61,6 +64,7 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
   customerName,
   customerPhone,
   customers,
+  cashAccounts = [],
   tasks,
   transactions,
   systemCurrency,
@@ -78,6 +82,7 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [displayCurrency, setDisplayCurrency] = useState<Currency>(systemCurrency);
   const [copiedText, setCopiedText] = useState(false);
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
   // Normalize current customer name
   const normalizedTarget = useMemo(() => normalizeName(customerName), [customerName]);
@@ -87,8 +92,17 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
     return customers.find(c => normalizeName(c.name) === normalizedTarget);
   }, [customers, normalizedTarget]);
 
-  const phoneToUse = customerPhone || customerObj?.phone || '';
-  const allPhones = customerObj?.phones && customerObj.phones.length > 0 ? customerObj.phones : (phoneToUse ? [phoneToUse] : []);
+  // Find independent financial account object if exists
+  const accountObj = useMemo(() => {
+    return cashAccounts?.find(a => normalizeName(a.name) === normalizedTarget);
+  }, [cashAccounts, normalizedTarget]);
+
+  const isAccountOnly = Boolean(accountObj && !customerObj);
+
+  const phoneToUse = customerPhone || customerObj?.phone || accountObj?.phone || '';
+  const allPhones = customerObj?.phones && customerObj.phones.length > 0 
+    ? customerObj.phones 
+    : (phoneToUse ? [phoneToUse] : []);
 
   // Helper for task financials
   const getTaskFinancials = (task: Task) => {
@@ -106,17 +120,51 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
     return { totalCost: totalCostUSD, totalPaid: totalPaidUSD, balance: balanceUSD };
   };
 
-  // Filter tasks belonging to this customer
+  // Filter tasks belonging to this customer (if not an account outside tasks)
   const customerTasks = useMemo(() => {
     if (!normalizedTarget) return [];
     return tasks.filter(t => normalizeName(t.customer) === normalizedTarget);
   }, [tasks, normalizedTarget]);
 
-  // Filter transactions belonging to this customer
+  // Filter transactions belonging to this customer or financial account
   const customerTransactions = useMemo(() => {
-    if (!normalizedTarget) return [];
-    return transactions.filter(t => normalizeName(t.customerName) === normalizedTarget);
-  }, [transactions, normalizedTarget]);
+    if (!normalizedTarget && !accountObj?.id) return [];
+    return transactions.filter(t => {
+      const matchName = normalizeName(t.customerName) === normalizedTarget;
+      const matchSource = normalizeName(t.sourceAccount) === normalizedTarget;
+      const matchDest = normalizeName((t as any).destinationAccount) === normalizedTarget;
+      const matchAccId = accountObj?.id && (t.cashAccountId === accountObj.id || (t as any).relatedAccountId === accountObj.id);
+      return matchName || matchSource || matchDest || matchAccId;
+    });
+  }, [transactions, normalizedTarget, accountObj]);
+
+  // Set of customer task IDs for strict relation checking
+  const customerTaskIds = useMemo(() => {
+    return new Set(customerTasks.map(t => String(t.id)));
+  }, [customerTasks]);
+
+  // Standalone transactions only (filtering out auto-generated task transactions to avoid doubling task deposits/costs)
+  const standaloneTransactions = useMemo(() => {
+    return customerTransactions.filter(tr => {
+      if (tr.isTask || Boolean(tr.taskId) || tr.type === 'due') return false;
+      if (tr.taskId && customerTaskIds.has(String(tr.taskId))) return false;
+      const desc = (tr.description || '').toLowerCase();
+      if (
+        desc.includes('مهمة') ||
+        desc.includes('عربون') ||
+        desc.includes('دفعة') ||
+        desc.includes('صيانة') ||
+        desc.includes('فاتورة') ||
+        desc.includes('مبيعات') ||
+        desc.includes('مشتريات') ||
+        desc.includes('سند قبض وارد (مهمة)') ||
+        desc.includes('سند صرف منصرف (مهمة)')
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [customerTransactions, customerTaskIds]);
 
   // Financial aggregates
   const financials = useMemo(() => {
@@ -134,7 +182,7 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
     let totalIncomeUSD = 0;
     let totalExpenseUSD = 0;
 
-    customerTransactions.forEach(tr => {
+    standaloneTransactions.forEach(tr => {
       const amountUSD = getInUSD(tr.amount || 0, tr.currency || systemCurrency, exchangeRates);
       if (tr.type === 'income') {
         totalIncomeUSD += amountUSD;
@@ -144,9 +192,8 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
     });
 
     // Net balance:
-    // إجمالي ما عليه: تكاليف المهام والمصروفات المسجلة عليه
-    // إجمالي ما له: مقدمات المهام والواصل والإيرادات المسجلة له
-    // الباقي للحساب: ناتج إجمالي ما عليه مطروح منه ماله
+    // ما عليه: إجمالي تكاليف المهام والمصروفات المسجلة عليه
+    // ما له: إجمالي الواصل والمقدمات المسددة والإيرادات المستقلة له
     const totalOverallCostUSD = totalTasksCostUSD + totalExpenseUSD;
     const totalOverallPaidUSD = totalTasksPaidUSD + totalIncomeUSD;
     const netDuesUSD = totalOverallCostUSD - totalOverallPaidUSD;
@@ -161,10 +208,10 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
       totalOverallCostUSD: totalOverallCostUSD,
       totalOverallPaidUSD: totalOverallPaidUSD,
       tasksCount: customerTasks.length,
-      transactionsCount: customerTransactions.length,
+      transactionsCount: standaloneTransactions.length,
       unpaidCount: customerTasks.filter(t => getTaskFinancials(t).balance > 0.01).length
     };
-  }, [customerTasks, customerTransactions, systemCurrency, exchangeRates]);
+  }, [customerTasks, standaloneTransactions, systemCurrency, exchangeRates]);
 
   // Unified items feed
   interface UnifiedItem {
@@ -178,8 +225,10 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
     amountUSD: number;
     paidUSD?: number;
     balanceUSD?: number;
+    runningRemainingUSD?: number;
     rawTask?: Task;
     rawTransaction?: Transaction;
+    taskId?: number | string;
     note?: string;
   }
 
@@ -213,6 +262,7 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
         paidUSD: totalPaid,
         balanceUSD: balance,
         rawTask: t,
+        taskId: t.id,
         note: t.storageLocation ? `الموقع: ${t.storageLocation}` : undefined
       });
 
@@ -230,6 +280,7 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
             badgeColor: 'bg-emerald-50 text-emerald-700 border-emerald-200',
             amountUSD: depUSD,
             rawTask: t,
+            taskId: t.id,
             note: `رقم المهمة #${t.id}`
           });
         });
@@ -245,31 +296,67 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
           badgeColor: 'bg-emerald-50 text-emerald-700 border-emerald-200',
           amountUSD: depUSD,
           rawTask: t,
+          taskId: t.id,
           note: `رقم المهمة #${t.id}`
         });
       }
     });
 
     // Add standalone transactions
-    customerTransactions.forEach(tr => {
+    standaloneTransactions.forEach(tr => {
       const amountUSD = getInUSD(tr.amount || 0, tr.currency || systemCurrency, exchangeRates);
       const isIncome = tr.type === 'income';
       items.push({
         id: `tr-${tr.id}`,
         type: 'transaction',
         date: tr.date,
-        title: tr.description || (isIncome ? 'سند قبض مالي' : 'سند صرف مالي'),
-        subTitle: tr.category ? `التصنيف: ${tr.category}` : 'معاملة مالية مستقلة',
+        title: isIncome ? 'سند قبض وارد (له)' : 'سند صرف منصرف (عليه)',
+        subTitle: tr.description ? `البيان: ${tr.description}` : (isIncome ? 'البيان: إيراد نقدي وارد' : 'البيان: مصروف منصرف'),
         badgeText: isIncome ? 'وارد (له)' : 'منصرف (عليه)',
         badgeColor: isIncome ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200',
         amountUSD: amountUSD,
-        rawTransaction: tr
+        rawTransaction: tr,
+        taskId: tr.taskId
       });
     });
 
-    // Sort by date descending
-    return items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [customerTasks, customerTransactions, systemCurrency, exchangeRates]);
+    // Sort chronologically ascending from the very first transaction to compute running balance accurately
+    const sortedAsc = [...items].sort((a, b) => {
+      const timeA = new Date(a.date).getTime();
+      const timeB = new Date(b.date).getTime();
+      if (timeA !== timeB) return timeA - timeB;
+      // If same timestamp, tasks come before payments
+      return a.type === 'task' ? -1 : 1;
+    });
+
+    let runningDues = 0;
+    const enriched = sortedAsc.map(item => {
+      if (item.type === 'task') {
+        // A task cost increases dues
+        runningDues += item.amountUSD;
+        // If task has paid amount handled directly in task, account for it
+        if (item.paidUSD && !item.rawTask?.depositHistory?.length && (item.rawTask?.deposit || 0) <= 0) {
+          runningDues -= item.paidUSD;
+        }
+      } else if (item.type === 'deposit') {
+        // A payment/deposit decreases dues
+        runningDues -= item.amountUSD;
+      } else if (item.type === 'transaction') {
+        if (item.rawTransaction?.type === 'income') {
+          runningDues -= item.amountUSD; // payment from customer decreases dues
+        } else {
+          runningDues += item.amountUSD; // expense charged to customer increases dues
+        }
+      }
+      return {
+        ...item,
+        runningRemainingUSD: runningDues
+      };
+    });
+
+    // Return ordered list: 'asc' = from first transaction to last transaction; 'desc' = latest first
+    return sortOrder === 'desc' ? [...enriched].reverse() : enriched;
+  }, [customerTasks, standaloneTransactions, sortOrder, systemCurrency, exchangeRates]);
 
   // Filtered feed
   const filteredFeed = useMemo(() => {
@@ -306,36 +393,39 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
     const formattedTotalPaid = `${formatAmount(financials.totalOverallPaidUSD, displayCurrency, exchangeRates)} ${displayCurrency}`;
     const formattedBalance = `${formatAmount(financials.netDuesUSD, displayCurrency, exchangeRates)} ${displayCurrency}`;
 
-    let text = `🧾 *كشف حساب العميل والعمليات المالية*\n`;
+    let text = isAccountOnly ? `🧾 *كشف حساب مالي مستقل*\n` : `🧾 *كشف حساب العميل والعمليات المالية*\n`;
     text += `🏬 *${appName}*\n`;
-    text += `👤 *العميل:* ${customerName}\n`;
+    text += isAccountOnly ? `🏦 *الحساب المالي:* ${customerName}\n` : `👤 *العميل:* ${customerName}\n`;
+    if (accountObj?.classification) text += `🏷️ *التصنيف:* ${accountObj.classification}\n`;
     if (phoneToUse) text += `📱 *الهاتف:* ${phoneToUse}\n`;
     text += `📅 *التاريخ:* ${new Date().toLocaleDateString('ar-SA')} - ${new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}\n`;
     text += `═════════════════════════\n`;
     text += `📊 *الموقف المالي العام:*\n`;
-    text += `💰 *إجمالي التكلفة / المبيعات:* ${formattedTotalCost}\n`;
-    text += `💵 *إجمالي المسدد والواصل:* ${formattedTotalPaid}\n`;
-    text += `📌 *صافي الرصيد المتبقي (المستحق):* ${formattedBalance}\n`;
+    text += `💰 *إجمالي ما عليه (تكلفة ومصروفات):* ${formattedTotalCost}\n`;
+    text += `💵 *إجمالي ما له (واصل وإيرادات):* ${formattedTotalPaid}\n`;
+    text += `📌 *الرصيد الصافي:* ${formattedBalance}\n`;
     text += `═════════════════════════\n\n`;
 
-    text += `📋 *تفاصيل العمليات والمهام:*\n`;
-    customerTasks.forEach((t, idx) => {
-      const { totalCost, totalPaid, balance } = getTaskFinancials(t);
-      const costStr = `${formatAmount(totalCost, displayCurrency, exchangeRates)} ${displayCurrency}`;
-      const paidStr = `${formatAmount(totalPaid, displayCurrency, exchangeRates)} ${displayCurrency}`;
-      const balStr = `${formatAmount(balance, displayCurrency, exchangeRates)} ${displayCurrency}`;
-      const dateStr = new Date(t.createdAt).toLocaleDateString('ar-SA');
-      text += `${idx + 1}. *[${dateStr}]* ${t.deviceType || 'جهاز'} ${t.brand ? `(${t.brand})` : ''}\n`;
-      if (t.issue) text += `   • المشكلة/البيان: ${t.issue}\n`;
-      text += `   • التكلفة: ${costStr} | الواصل: ${paidStr} | المتبقي: ${balStr}\n\n`;
-    });
+    if (customerTasks.length > 0) {
+      text += `📋 *تفاصيل المهام والفواتير:*\n`;
+      customerTasks.forEach((t, idx) => {
+        const { totalCost, totalPaid, balance } = getTaskFinancials(t);
+        const costStr = `${formatAmount(totalCost, displayCurrency, exchangeRates)} ${displayCurrency}`;
+        const paidStr = `${formatAmount(totalPaid, displayCurrency, exchangeRates)} ${displayCurrency}`;
+        const balStr = `${formatAmount(balance, displayCurrency, exchangeRates)} ${displayCurrency}`;
+        const dateStr = new Date(t.createdAt).toLocaleDateString('ar-SA');
+        text += `${idx + 1}. *[${dateStr}]* ${t.deviceType || 'جهاز'} ${t.brand ? `(${t.brand})` : ''}\n`;
+        if (t.issue) text += `   • المشكلة/البيان: ${t.issue}\n`;
+        text += `   • التكلفة: ${costStr} | الواصل: ${paidStr} | المتبقي: ${balStr}\n\n`;
+      });
+    }
 
     if (customerTransactions.length > 0) {
       text += `💳 *المعاملات المالية والسندات المستقلة:*\n`;
       customerTransactions.forEach((tr, idx) => {
         const amtStr = `${formatAmount(getInUSD(tr.amount || 0, tr.currency || systemCurrency, exchangeRates), displayCurrency, exchangeRates)} ${displayCurrency}`;
         const dateStr = new Date(tr.date).toLocaleDateString('ar-SA');
-        const typeStr = tr.type === 'income' ? 'قبض/وارد' : 'صرف/منصرف';
+        const typeStr = tr.type === 'income' ? 'ما له (قبض/إيراد)' : 'ما عليه (صرف/مصروف)';
         text += `${idx + 1}. *[${dateStr}]* ${typeStr}: ${tr.description || 'معاملة'} (${amtStr})\n`;
       });
       text += `\n`;
@@ -389,14 +479,20 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="text-lg sm:text-xl font-black truncate">{customerName}</h3>
-                  {customerObj?.classification && (
+                  {isAccountOnly ? (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/30 text-amber-100 border border-amber-300/40 backdrop-blur-sm">
+                      {accountObj?.classification || 'حساب مالي مستقل'}
+                    </span>
+                  ) : customerObj?.classification ? (
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/20 text-white border border-white/30 backdrop-blur-sm">
                       {customerObj.classification}
                     </span>
-                  )}
+                  ) : null}
                 </div>
                 <p className="text-xs text-emerald-100 font-medium mt-0.5">
-                  كشف الحساب والعمليات المالية الشاملة للعميل
+                  {isAccountOnly 
+                    ? 'كشف حساب مالي مستقل للمصروفات/الإيرادات خارج مهام وعمل العملاء' 
+                    : 'كشف الحساب والعمليات المالية الشاملة للعميل'}
                 </p>
               </div>
             </div>
@@ -443,7 +539,7 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
             </div>
 
             {/* Currency selector */}
-            <div className="flex items-center gap-1 bg-black/20 p-0.5 rounded-xl border border-white/20">
+            <div className="flex items-center gap-1 bg-emerald-800/60 p-0.5 rounded-xl border border-emerald-400/40">
               {(['RY', 'SAR', 'USD'] as Currency[]).map(c => (
                 <button
                   key={c}
@@ -463,15 +559,15 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
           </div>
         </div>
 
-        {/* Scrollable Content Container */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+        {/* Scrollable Content Container (Vertical Only) */}
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-5 space-y-4">
           {/* Key Financial Summary Cards (Clean, High Contrast, Optimized for Note 20 Ultra) */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
             {/* Total Cost */}
             <div className="bg-blue-500/12 border border-blue-200/80 rounded-2xl p-3 flex flex-col justify-between">
               <span className="text-[11px] font-bold text-blue-700 flex items-center gap-1">
                 <TrendingUp className="w-3.5 h-3.5 text-blue-600" />
-                إجمالي التكلفة
+                إجمالي ما عليه (التكاليف)
               </span>
               <div className="mt-1">
                 <span className="text-base sm:text-lg font-black text-slate-950">
@@ -479,14 +575,14 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
                 </span>
                 <span className="text-[10px] font-bold text-slate-600 mr-1">{displayCurrency}</span>
               </div>
-              <span className="text-[9px] text-blue-600/80 mt-0.5 font-medium">مهام ومشتريات</span>
+              <span className="text-[9px] text-blue-600/80 mt-0.5 font-medium">تكاليف مهام ومصروفات</span>
             </div>
 
             {/* Total Paid */}
             <div className="bg-emerald-500/12 border border-emerald-200/80 rounded-2xl p-3 flex flex-col justify-between">
               <span className="text-[11px] font-bold text-emerald-700 flex items-center gap-1">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                المسدد والواصل
+                إجمالي ما له (الواصل)
               </span>
               <div className="mt-1">
                 <span className="text-base sm:text-lg font-black text-slate-950">
@@ -494,7 +590,7 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
                 </span>
                 <span className="text-[10px] font-bold text-slate-600 mr-1">{displayCurrency}</span>
               </div>
-              <span className="text-[9px] text-emerald-600/80 mt-0.5 font-medium">سندات وعرابين</span>
+              <span className="text-[9px] text-emerald-600/80 mt-0.5 font-medium">مقدمات وسندات مسددة</span>
             </div>
 
             {/* Remaining Balance */}
@@ -515,10 +611,10 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
                   <Check className="w-3.5 h-3.5 text-emerald-600" />
                 )}
                 {financials.netDuesUSD > 0.01
-                  ? 'المتبقي بذمته'
+                  ? 'المتبقي عليه'
                   : financials.netDuesUSD < -0.01
-                  ? 'فائض له'
-                  : 'الرصيد المتبقي'}
+                  ? 'المتبقي له'
+                  : 'الحساب خالص'}
               </span>
               <div className="mt-1">
                 <span className="text-base sm:text-lg font-black text-slate-950">
@@ -527,7 +623,7 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
                 <span className="text-[10px] font-bold opacity-70 mr-1">{displayCurrency}</span>
               </div>
               <span className="text-[9px] font-bold opacity-80 mt-0.5">
-                {financials.netDuesUSD > 0.01 ? 'ذمة مستحقة للسداد' : 'خالص تماماً'}
+                {financials.netDuesUSD > 0.01 ? 'صافي المتبقي مطلوب سداده' : 'خالص تماماً'}
               </span>
             </div>
 
@@ -641,7 +737,7 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
             <ExportToolbar
               targetElementId={`customer-financial-account-${normalizedTarget}`}
               filenamePrefix={`كشف_حساب_${customerName.replace(/\s+/g, '_')}`}
-              title={`كشف حساب العميل: ${customerName}`}
+              title={isAccountOnly ? `كشف حساب مالي مستقل: ${customerName}` : `كشف حساب العميل: ${customerName}`}
               getTextToCopy={generateAccountReportText}
               size="xs"
               compact={true}
@@ -651,53 +747,91 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
           {/* Search and Tabs Bar */}
           <div className="space-y-2.5">
             {/* Search Input */}
-            <div className="relative">
+            <div className="relative flex items-center">
               <input
                 type="text"
                 placeholder="بحث في عمليات كشف الحساب (بالجهاز، البيان، التاريخ، السند)..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-9 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-hidden focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-all text-slate-800"
+                className="w-full pl-20 pr-9 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-hidden focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-all text-slate-800"
               />
               <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
+              <div className="absolute left-0 top-0 bottom-0 h-full flex items-center z-10 overflow-hidden rounded-l-xl">
+                <VoiceInputButton
+                  target="customer-account-search"
+                  onResult={(text) => setSearchQuery(text)}
+                  className="p-1 text-slate-400 hover:text-emerald-600 rounded-lg"
+                  buttonTitle="تحويل الكلام إلى نص"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="h-full aspect-square bg-red-500 hover:bg-red-600 active:bg-red-700 text-white transition-all cursor-pointer flex items-center justify-center shrink-0 font-bold"
+                    title="مسح النص وإلغاء المدخلات بنقرة واحدة"
+                  >
+                    <X className="w-4 h-4 stroke-[3]" />
+                  </button>
+                )}
+              </div>
             </div>
 
-            {/* Filter Tabs */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
-              {[
-                { id: 'all', label: `الكل (${unifiedItems.length})` },
-                { id: 'tasks', label: `المهام والفواتير (${customerTasks.length})` },
-                { id: 'deposits', label: `سندات القبض والدفعات` },
-                { id: 'transactions', label: `المعاملات المالية (${customerTransactions.length})` },
-                {
-                  id: 'unpaid',
-                  label: `غير المسددة (${financials.unpaidCount})`,
-                  color: financials.unpaidCount > 0 ? 'text-red-700 bg-red-50 border-red-200' : ''
-                }
-              ].map(tab => (
+            {/* Filter Tabs & Sort Order Switcher */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+                {[
+                  { id: 'all', label: `الكل (${unifiedItems.length})` },
+                  { id: 'tasks', label: `المهام والفواتير (${customerTasks.length})` },
+                  { id: 'deposits', label: `سندات القبض والدفعات` },
+                  { id: 'transactions', label: `المعاملات المالية (${customerTransactions.length})` },
+                  {
+                    id: 'unpaid',
+                    label: `غير المسددة (${financials.unpaidCount})`,
+                    color: financials.unpaidCount > 0 ? 'text-red-700 bg-red-50 border-red-200' : ''
+                  }
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id as TabType)}
+                    className={cn(
+                      'px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap cursor-pointer border text-xs',
+                      activeTab === tab.id
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                        : tab.color || 'bg-white text-slate-600 hover:bg-slate-50 border-slate-200'
+                    )}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Sort Order Selector */}
+              <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0 self-end sm:self-auto">
+                <span className="text-[10px] font-black text-slate-500 mr-1">التسلسل:</span>
                 <button
-                  key={tab.id}
                   type="button"
-                  onClick={() => setActiveTab(tab.id as TabType)}
+                  onClick={() => setSortOrder('asc')}
                   className={cn(
-                    'px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap cursor-pointer border text-xs',
-                    activeTab === tab.id
-                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
-                      : tab.color || 'bg-white text-slate-600 hover:bg-slate-50 border-slate-200'
+                    "px-2 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer",
+                    sortOrder === 'asc' ? "bg-white text-emerald-800 shadow-xs border border-slate-200" : "text-slate-600 hover:text-slate-900"
                   )}
+                  title="عرض تسلسلي محاسبي سليم من أول حركة حتى آخر حركة مع المتبقي"
                 >
-                  {tab.label}
+                  من أول معاملة لآخرها ✓
                 </button>
-              ))}
+                <button
+                  type="button"
+                  onClick={() => setSortOrder('desc')}
+                  className={cn(
+                    "px-2 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer",
+                    sortOrder === 'desc' ? "bg-white text-emerald-800 shadow-xs border border-slate-200" : "text-slate-600 hover:text-slate-900"
+                  )}
+                  title="عرض من الأحدث للأقدم"
+                >
+                  الأحدث أولاً
+                </button>
+              </div>
             </div>
           </div>
 
@@ -778,7 +912,7 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
 
                     {/* Financial Numbers & Actions Row */}
                     <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap text-xs">
-                      <div className="flex items-center gap-3 flex-wrap font-bold">
+                      <div className="flex items-center gap-2.5 flex-wrap font-bold">
                         {isTask ? (
                           <>
                             <span className="text-blue-700">
@@ -794,14 +928,6 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
                                 {formatAmount(item.paidUSD || 0, displayCurrency, exchangeRates)}
                               </span>
                             </span>
-
-                            {(item.balanceUSD || 0) > 0.01 ? (
-                              <span className="text-slate-950 font-black bg-red-500/20 px-2 py-0.5 rounded-lg border border-red-300/80">
-                                المتبقي: {formatAmount(item.balanceUSD || 0, displayCurrency, exchangeRates)} {displayCurrency}
-                              </span>
-                            ) : (
-                              <span className="text-emerald-600 text-[11px] font-bold">مصفى وخالص ✓</span>
-                            )}
                           </>
                         ) : (
                           <span className={item.type === 'deposit' ? 'text-emerald-700' : 'text-slate-800'}>
@@ -809,6 +935,20 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
                             <span className="font-black">
                               {formatAmount(item.amountUSD, displayCurrency, exchangeRates)} {displayCurrency}
                             </span>
+                          </span>
+                        )}
+
+                        {/* الرصيد المتبقي التراكمي في الحساب بعد هذه الحركة مباشرة */}
+                        {item.runningRemainingUSD !== undefined && (
+                          <span className={cn(
+                            "px-2 py-0.5 rounded-lg border text-[11px] font-black",
+                            item.runningRemainingUSD > 0.01 
+                              ? "bg-red-50 text-red-900 border-red-200" 
+                              : item.runningRemainingUSD < -0.01 
+                              ? "bg-blue-50 text-blue-900 border-blue-200" 
+                              : "bg-emerald-50 text-emerald-900 border-emerald-200"
+                          )}>
+                            المتبقي في الحساب: {formatAmount(Math.abs(item.runningRemainingUSD), displayCurrency, exchangeRates)} {displayCurrency} {item.runningRemainingUSD > 0.01 ? '(عليه)' : item.runningRemainingUSD < -0.01 ? '(له)' : '(خالص)'}
                           </span>
                         )}
                       </div>
@@ -842,6 +982,28 @@ export const CustomerFinancialAccountModal: React.FC<CustomerFinancialAccountMod
                             title="تعديل وتفاصيل المهمة"
                           >
                             عرض المهمة
+                          </button>
+                        )}
+
+                        {/* Dedicated Icon/Button to open related Maintenance Task for the transaction */}
+                        {onEditTask && (item.taskId || item.rawTransaction?.taskId) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const tId = Number(item.taskId || item.rawTransaction?.taskId);
+                              const relatedTask = tasks.find(t => t.id === tId);
+                              if (relatedTask) {
+                                onClose();
+                                onEditTask(relatedTask);
+                              } else {
+                                toast.error(`لم يتم العثور على المهمة رقم #${tId}`);
+                              }
+                            }}
+                            className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-lg text-[10px] font-black flex items-center gap-1 transition-all shadow-2xs cursor-pointer active:scale-95"
+                            title="الانتقال المباشر لنافذة المهمة المتعلقة بهذه المعاملة المالية"
+                          >
+                            <Wrench className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                            <span>المهمة المرتبطة (#{item.taskId || item.rawTransaction?.taskId})</span>
                           </button>
                         )}
 

@@ -1,11 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Loader2, 
   Sparkles, 
   Mic, 
   MicOff, 
   Volume2, 
+  VolumeX,
   X, 
   Send, 
   CheckCircle2, 
@@ -23,12 +25,22 @@ import {
   UserCheck,
   ClipboardPaste,
   FileCheck,
-  Bell
+  Bell,
+  LayoutDashboard,
+  ExternalLink,
+  Layers,
+  Smartphone,
+  History,
+  Copy,
+  Trash2
 } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
+import toast from 'react-hot-toast';
 import { cn } from '../lib/utils';
 import { db } from '../lib/db';
+import { GoogleGenAI, Type } from '@google/genai';
 import { CashAccount } from '../types';
+import { VoiceAssistantChatHistoryModal } from './VoiceAssistantChatHistoryModal';
 import { 
   getVoiceSettings, 
   saveVoiceSettings, 
@@ -43,8 +55,8 @@ import { startUnifiedSpeechRecognition, stopUnifiedSpeechRecognition } from '../
 
 let sessionActionStack: { type: string, data: any }[] = [];
 
-export const GeminiIcon = ({ className = "w-5 h-5" }: { className?: string }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+export const GeminiIcon = ({ className = "w-5 h-5", style }: { className?: string; style?: React.CSSProperties }) => (
+  <svg className={className} style={style} viewBox="0 0 24 24" fill="currentColor">
     <path d="M12 2C12 7.52285 7.52285 12 2 12C7.52285 12 12 16.4771 12 22C12 16.4771 16.4771 12 22 12C16.4771 12 12 7.52285 12 2" />
   </svg>
 );
@@ -79,16 +91,22 @@ export const VoiceAssistant = ({
   className, 
   onClick,
   onClose,
+  hideMainButton = false,
 }: { 
   className?: string; 
   onClick?: (e: React.MouseEvent, toggleVoice: () => void) => void;
   onClose?: () => void;
+  hideMainButton?: boolean;
 }) => {
   const [isActive, setIsActive] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState('');
-  const [assistantMessage, setAssistantMessage] = useState(getVoiceSettings().welcomeMessage || 'أهلاً بك، أنا جاهز لتنفيذ الأوامر.');
+  const [voiceSettings, setVoiceSettings] = useState<VoiceAssistantSettings>(getVoiceSettings());
+
+  const [assistantMessage, setAssistantMessage] = useState(
+    getVoiceSettings().welcomeMessage || 'أهلاً بك، أنا جاهز لتنفيذ الأوامر.'
+  );
   const [chatMessages, setChatMessages] = useState<AssistantChatMessage[]>(() => [
     {
       id: 'welcome',
@@ -104,18 +122,98 @@ export const VoiceAssistant = ({
 
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
-  const [voiceSettings, setVoiceSettings] = useState<VoiceAssistantSettings>(getVoiceSettings());
+  const [isDirectChatOnly, setIsDirectChatOnly] = useState(false);
+  const [isMainScreenExited, setIsMainScreenExited] = useState(false);
+  const [bubblePos, setBubblePos] = useState<{ x: number; y: number }>(() => {
+    if (typeof window !== 'undefined') {
+      return { x: Math.max(16, window.innerWidth - 76), y: Math.max(80, window.innerHeight - 190) };
+    }
+    return { x: 20, y: 150 };
+  });
+  const isDraggingRef = useRef(false);
+  const dragStartPosRef = useRef({ x: 0, y: 0, bubbleX: 0, bubbleY: 0 });
+  const hasMovedRef = useRef(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [textInput, setTextInput] = useState('');
   const [assistantEngineMode, setAssistantEngineMode] = useState<1 | 2 | 3 | 4 | 5 | 6>((getVoiceSettings().assistantEngineMode as any) || 6);
   const [isEngineMenuOpen, setIsEngineMenuOpen] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
-  const [pendingTaskSelection, setPendingTaskSelection] = useState<{ customerName: string; tasks: any[] } | null>(null);
 
   // Financial notification handling & cash accounts state
   const [cashAccounts, setCashAccounts] = useState<CashAccount[]>([]);
   const [activeSuggestionAccount, setActiveSuggestionAccount] = useState<{ [msgId: string]: number }>({});
   const [isClipboardReading, setIsClipboardReading] = useState(false);
+  const [showManualPasteModal, setShowManualPasteModal] = useState(false);
+  const [manualPasteText, setManualPasteText] = useState('');
+  const [isChatHistoryModalOpen, setIsChatHistoryModalOpen] = useState(false);
+  const [selectedMessageForAction, setSelectedMessageForAction] = useState<AssistantChatMessage | null>(null);
+  const touchTimerRef = useRef<any>(null);
+
+  const handleTouchStartMessage = (msg: AssistantChatMessage) => {
+    if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
+    touchTimerRef.current = setTimeout(() => {
+      setSelectedMessageForAction(msg);
+    }, 450);
+  };
+
+  const handleTouchEndMessage = () => {
+    if (touchTimerRef.current) {
+      clearTimeout(touchTimerRef.current);
+    }
+  };
+
+  const handleDeleteChatMessage = async (msgId: string | number) => {
+    const strId = String(msgId);
+    setChatMessages(prev => prev.filter(m => String(m.id) !== strId));
+    try {
+      await db.voiceChats.delete(strId);
+    } catch (e) {}
+    toast.success('تم حذف الرسالة بنجاح');
+    setSelectedMessageForAction(null);
+  };
+
+  const handleCopyChatMessage = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast.success('تم نسخ النص إلى الحافظة');
+    setSelectedMessageForAction(null);
+  };
+
+  const handleShareChatMessage = async (text: string) => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'مساعد الفيصلي الذكي',
+          text: text
+        });
+      } catch (e) {}
+    } else {
+      navigator.clipboard.writeText(text);
+      toast.success('تم نسخ النص للمشاركة');
+    }
+    setSelectedMessageForAction(null);
+  };
+
+  // Back button (Popstate) support for VoiceAssistant modals
+  useEffect(() => {
+    if (isChatHistoryModalOpen || isSettingsOpen || isActive) {
+      window.history.pushState({ voiceAssistantState: true }, '');
+
+      const handleAssistantPopState = () => {
+        if (isChatHistoryModalOpen) {
+          setIsChatHistoryModalOpen(false);
+        } else if (isSettingsOpen) {
+          setIsSettingsOpen(false);
+        } else if (isActive) {
+          setIsActive(false);
+        }
+      };
+
+      window.addEventListener('popstate', handleAssistantPopState);
+      return () => {
+        window.removeEventListener('popstate', handleAssistantPopState);
+      };
+    }
+  }, [isActive, isSettingsOpen, isChatHistoryModalOpen]);
 
   const recognitionRef = useRef<any>(null);
 
@@ -129,6 +227,8 @@ export const VoiceAssistant = ({
 
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const noSpeechCountRef = useRef<number>(0);
+  const lastCommittedTextRef = useRef<string>('');
+  const lastCommittedTimeRef = useRef<number>(0);
 
   // Load cash accounts for financial operations
   const loadCashAccounts = async () => {
@@ -157,20 +257,102 @@ export const VoiceAssistant = ({
       const text = e.detail?.text || e.detail?.body || e.detail?.message;
       if (text && typeof text === 'string') {
         const notif = parseFinancialNotification(text, voiceSettings.allowedNotificationSenders);
-        if (notif.isFinancial && (voiceSettings.notificationMonitoringEnabled ?? true)) {
+        if (notif && notif.isFinancial && (voiceSettings.notificationMonitoringEnabled ?? true)) {
           setIsActive(true);
           handleFinancialNotification(notif);
         }
       }
     };
 
+    const handleExplicitAssistantSuggestion = (e: any) => {
+      const detail = e.detail;
+      if (!detail) return;
+      setIsActive(true);
+      if (detail.text || (detail.partyName && detail.amount)) {
+        const notif: ParsedFinancialNotification = (detail.text ? parseFinancialNotification(detail.text, voiceSettings.allowedNotificationSenders) : null) || {
+          isFinancial: true,
+          type: detail.type || 'deposit',
+          partyName: detail.partyName || 'مودع / مستلم',
+          amount: Number(detail.amount) || 0,
+          currency: detail.currency || 'RY',
+          sourceEntity: detail.sourceEntity,
+          referenceNumber: detail.referenceNumber,
+          rawText: detail.text || `${detail.type === 'deposit' ? 'أودع' : 'تم تحويل'} ${detail.partyName} مبلغ ${detail.amount}`,
+          confidence: 1.0
+        };
+        handleFinancialNotification(notif);
+      }
+    };
+
     window.addEventListener('bank_notification_received', handleExternalNotification);
     window.addEventListener('incoming_notification', handleExternalNotification);
+    window.addEventListener('sms_received', handleExternalNotification);
+    window.addEventListener('open_assistant_with_financial_suggestion', handleExplicitAssistantSuggestion);
     return () => {
       window.removeEventListener('bank_notification_received', handleExternalNotification);
       window.removeEventListener('incoming_notification', handleExternalNotification);
+      window.removeEventListener('sms_received', handleExternalNotification);
+      window.removeEventListener('open_assistant_with_financial_suggestion', handleExplicitAssistantSuggestion);
     };
   }, [voiceSettings, cashAccounts]);
+
+  // Synchronize floating assistant position with main assistant button coordinates or configured position when exiting main screen
+  useEffect(() => {
+    if (isMainScreenExited) {
+      try {
+        const saved = localStorage.getItem('faisali_floating_pos_main');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+            const screenW = window.innerWidth || 412;
+            const screenH = window.innerHeight || 915;
+            setBubblePos({
+              x: Math.min(Math.max(8, parsed.x), screenW - 64),
+              y: Math.min(Math.max(50, parsed.y), screenH - 85)
+            });
+            return;
+          }
+        }
+      } catch (err) {}
+
+      try {
+        const btn = document.getElementById('floating-assistant-btn') || document.getElementById('main-assistant-btn');
+        if (btn) {
+          const rect = btn.getBoundingClientRect();
+          if (rect && rect.width > 0 && rect.height > 0) {
+            setBubblePos({
+              x: Math.round(rect.left),
+              y: Math.round(rect.top)
+            });
+            return;
+          }
+        }
+      } catch (err) {}
+
+      // Fallback according to configured floating position on edges of mobile screen
+      const pos = voiceSettings.floatingExitAssistantPosition || 'bottom-right';
+      if (typeof window !== 'undefined') {
+        const screenW = window.innerWidth || 412;
+        const screenH = window.innerHeight || 915;
+        if (pos === 'bottom-left') {
+          setBubblePos({ x: 10, y: Math.max(75, screenH - 145) });
+        } else if (pos === 'top-right') {
+          setBubblePos({ x: Math.max(10, screenW - 68), y: 75 });
+        } else if (pos === 'top-left') {
+          setBubblePos({ x: 10, y: 75 });
+        } else {
+          setBubblePos({ x: Math.max(10, screenW - 68), y: Math.max(75, screenH - 145) });
+        }
+      }
+    }
+  }, [isMainScreenExited, voiceSettings.floatingExitAssistantPosition]);
+
+  // Cancel any ongoing TTS speech when the component unmounts or exits
+  useEffect(() => {
+    return () => {
+      stopOngoingSpeech();
+    };
+  }, []);
 
   // Subscribe to active task changes
   useEffect(() => {
@@ -186,8 +368,8 @@ export const VoiceAssistant = ({
 
   // Subscribe to voice settings changes
   useEffect(() => {
-    const handleSettingsChange = () => {
-      const current = getVoiceSettings();
+    const handleSettingsChange = (e?: any) => {
+      const current = e?.detail || getVoiceSettings();
       setVoiceSettings(current);
       if (current.assistantEngineMode) {
         setAssistantEngineMode(current.assistantEngineMode as any);
@@ -224,15 +406,48 @@ export const VoiceAssistant = ({
       }
     };
 
-    (window as any).onSpeechError = (errType: string, target?: string) => {
+    (window as any).onSpeechError = async (errType: string, target?: string) => {
       if (target === 'search') return;
+      console.warn("Native onSpeechError caught:", errType);
+
+      // On Android 13 Samsung Note 20 Ultra: error 12 (ERROR_LANGUAGE_NOT_SUPPORTED) or service missing
+      if (errType === '12' || errType?.includes('12') || errType === 'service_not_installed' || errType === 'service_not_available') {
+        console.log("Switching to MediaRecorder fallback on Android 13 error 12...");
+        setAssistantMessage('استمع لصوتك الآن عبر الذكاء الاصطناعي... تفضل بالتحدث 🎙️');
+        setIsListening(true);
+        try {
+          const { startMediaRecorderFallback } = await import('../lib/nativeSpeechService');
+          await startMediaRecorderFallback({
+            target: 'assistant',
+            language: 'ar-SA',
+            onStart: () => {
+              setIsListening(true);
+              setAssistantMessage('استمع إليك الآن... تفضل بالتحدث 🎙️');
+            },
+            onResult: (finalTranscript: string) => {
+              setIsListening(false);
+              const clean = finalTranscript.trim();
+              if (clean) {
+                commitUserVoiceCommand(clean);
+              }
+            },
+            onError: (fbErr: string) => {
+              setIsListening(false);
+              setAssistantMessage(fbErr || 'لم يتم التقاط صوت واضح. انقر على الميكروفون للبدء مجدداً.');
+            },
+            onEnd: () => {
+              setIsListening(false);
+            }
+          });
+          return;
+        } catch (fbErr) {}
+      }
+
       setIsListening(false);
       if (errType === 'permission_denied') {
         setAssistantMessage('إذن الميكروفون مطلوب للتعرف الصوتي. يرجى منحه من إعدادات الهاتف.');
       } else if (errType === 'cancelled' || errType === 'no_match') {
         setAssistantMessage('تم إلغاء الاستماع أو لم يُلتقط صوت. انقر للمحاولة مجدداً.');
-      } else if (errType === 'service_not_installed' || errType === 'service_not_available') {
-        setAssistantMessage('خدمة التعرف الصوتي غير مفعلة، يرجى تفعيل تطبيق Google في الهاتف أو كتابة الأمر أدناه.');
       } else {
         setAssistantMessage('تعذر التقاط الصوت، يمكنك النقر للمحاولة أو كتابة الأمر أدناه.');
       }
@@ -261,6 +476,107 @@ export const VoiceAssistant = ({
       window.removeEventListener('popstate', handlePopState);
     };
   }, [isActive]);
+
+  // Sync settings dynamically when altered in VoiceAssistantSettingsModal
+  useEffect(() => {
+    const handleSettingsChanged = (e: any) => {
+      if (e?.detail) {
+        setVoiceSettings(e.detail);
+      } else {
+        setVoiceSettings(getVoiceSettings());
+      }
+    };
+    window.addEventListener('voice_settings_changed', handleSettingsChanged);
+    return () => window.removeEventListener('voice_settings_changed', handleSettingsChanged);
+  }, []);
+
+  // Listen for exiting main screen or returning to main app
+  useEffect(() => {
+    const handleExitToFloating = () => {
+      setIsMainScreenExited(true);
+    };
+    const handleFocusMainApp = () => {
+      setIsMainScreenExited(false);
+    };
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        setIsMainScreenExited(true);
+      }
+    };
+    window.addEventListener('exit_to_floating_assistant', handleExitToFloating);
+    window.addEventListener('focus_main_app', handleFocusMainApp);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('exit_to_floating_assistant', handleExitToFloating);
+      window.removeEventListener('focus_main_app', handleFocusMainApp);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
+  // Direct chat event handler (for first-click open from notifications or external trigger)
+  useEffect(() => {
+    const handleOpenDirectChat = () => {
+      setIsActive(true);
+      setIsDirectChatOnly(true);
+      restartListening();
+    };
+    window.addEventListener('open_direct_assistant_chat', handleOpenDirectChat);
+    return () => window.removeEventListener('open_direct_assistant_chat', handleOpenDirectChat);
+  }, []);
+
+  // Android 13 & Capacitor Background Service & Floating Notification
+  useEffect(() => {
+    if (!voiceSettings.floatingAssistantOnExit) return;
+
+    let appListenerHandle: any = null;
+    let notifListenerHandle: any = null;
+
+    const setupBackgroundService = async () => {
+      try {
+        const { App } = await import('@capacitor/app');
+        const { LocalNotifications } = await import('@capacitor/local-notifications');
+
+        // Android 13 High Importance Notification Channel for Floating Assistant
+        await LocalNotifications.createChannel({
+          id: 'assistant-floating-service',
+          name: 'المساعد الصوتي العائم',
+          description: 'تشغيل المساعد الصوتي والدردشة الفورية في الخلفية والشاشة الرئيسية',
+          importance: 5,
+          visibility: 1,
+          vibration: false
+        }).catch(() => {});
+
+        // Listen for when app goes to background or resumes
+        appListenerHandle = await App.addListener('appStateChange', async (state) => {
+          if (state.isActive) {
+            setIsMainScreenExited(false);
+          }
+          try {
+            await LocalNotifications.cancel({ notifications: [{ id: 88880 }] });
+          } catch (err) {}
+        });
+
+        // Listen for Notification Tap
+        notifListenerHandle = await LocalNotifications.addListener('localNotificationActionPerformed', (notification) => {
+          if (notification.notification?.extra?.action === 'open_direct_chat' || notification.notification?.id === 88880) {
+            setIsActive(true);
+            setIsDirectChatOnly(true);
+            restartListening();
+          }
+        });
+      } catch (err) {
+        // Fallback or web environment
+      }
+    };
+
+    setupBackgroundService();
+
+    return () => {
+      if (appListenerHandle && typeof appListenerHandle.remove === 'function') appListenerHandle.remove();
+      if (notifListenerHandle && typeof notifListenerHandle.remove === 'function') notifListenerHandle.remove();
+    };
+  }, [voiceSettings.floatingAssistantOnExit]);
 
   // Dynamic CSS classes for assistant themes
   const getBgStyleClass = () => {
@@ -305,126 +621,196 @@ export const VoiceAssistant = ({
         return {
           iconBg: 'bg-sky-500',
           titleColor: 'text-sky-800 dark:text-sky-300',
-          msgBg: 'bg-sky-50/90 border-2 border-sky-400 text-sky-950',
-          msgIconBg: 'bg-sky-100 text-sky-800 border border-sky-300'
+          msgBg: 'bg-sky-50/90 dark:bg-sky-950/80 border-2 border-sky-400 text-sky-950 dark:text-sky-100',
+          msgIconBg: 'bg-sky-100 dark:bg-sky-900/60 text-sky-800 dark:text-sky-300 border border-sky-300',
+          btnActive: 'bg-gradient-to-tr from-sky-600 via-blue-600 to-indigo-600 text-white ring-4 ring-sky-300/80 shadow-sky-500/50 scale-110 border-2 border-white',
+          btnNormal: 'bg-gradient-to-tr from-sky-600 via-blue-600 to-indigo-600 text-white border-2 border-white/90 hover:scale-105 active:scale-95 shadow-lg shadow-sky-500/40',
+          auraPing: 'bg-sky-400/40',
+          auraColor: '#38bdf8',
+          geminiColor: '#38bdf8',
+          actionBtn: 'bg-sky-600 hover:bg-sky-500 text-white',
+          chipHover: 'hover:bg-sky-600 hover:text-white hover:border-sky-600'
         };
       case 'amber':
         return {
           iconBg: 'bg-amber-500',
           titleColor: 'text-amber-800 dark:text-amber-300',
-          msgBg: 'bg-amber-50/90 border-2 border-amber-400 text-amber-950',
-          msgIconBg: 'bg-amber-100 text-amber-800 border border-amber-300'
+          msgBg: 'bg-amber-50/90 dark:bg-amber-950/80 border-2 border-amber-400 text-amber-950 dark:text-amber-100',
+          msgIconBg: 'bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 border border-amber-300',
+          btnActive: 'bg-gradient-to-tr from-amber-500 via-amber-600 to-yellow-500 text-slate-950 ring-4 ring-amber-300/80 shadow-amber-500/50 scale-110 border-2 border-white',
+          btnNormal: 'bg-gradient-to-tr from-amber-500 via-amber-600 to-yellow-500 text-slate-950 border-2 border-white/90 hover:scale-105 active:scale-95 shadow-lg shadow-amber-500/40',
+          auraPing: 'bg-amber-400/40',
+          auraColor: '#fbbf24',
+          geminiColor: '#fbbf24',
+          actionBtn: 'bg-amber-500 hover:bg-amber-600 text-slate-950',
+          chipHover: 'hover:bg-amber-500 hover:text-slate-950 hover:border-amber-500'
         };
       case 'purple':
         return {
           iconBg: 'bg-purple-600',
           titleColor: 'text-purple-800 dark:text-purple-300',
-          msgBg: 'bg-purple-50/90 border-2 border-purple-400 text-purple-950',
-          msgIconBg: 'bg-purple-100 text-purple-800 border border-purple-300'
+          msgBg: 'bg-purple-50/90 dark:bg-purple-950/80 border-2 border-purple-400 text-purple-950 dark:text-purple-100',
+          msgIconBg: 'bg-purple-100 dark:bg-purple-900/60 text-purple-800 dark:text-purple-300 border border-purple-300',
+          btnActive: 'bg-gradient-to-tr from-purple-600 via-violet-600 to-indigo-600 text-white ring-4 ring-purple-300/80 shadow-purple-500/50 scale-110 border-2 border-white',
+          btnNormal: 'bg-gradient-to-tr from-purple-600 via-violet-600 to-indigo-600 text-white border-2 border-white/90 hover:scale-105 active:scale-95 shadow-lg shadow-purple-500/40',
+          auraPing: 'bg-purple-400/40',
+          auraColor: '#c084fc',
+          geminiColor: '#c084fc',
+          actionBtn: 'bg-purple-600 hover:bg-purple-500 text-white',
+          chipHover: 'hover:bg-purple-600 hover:text-white hover:border-purple-600'
         };
       case 'rose':
         return {
           iconBg: 'bg-rose-600',
           titleColor: 'text-rose-800 dark:text-rose-300',
-          msgBg: 'bg-rose-50/90 border-2 border-rose-400 text-rose-950',
-          msgIconBg: 'bg-rose-100 text-rose-800 border border-rose-300'
+          msgBg: 'bg-rose-50/90 dark:bg-rose-950/80 border-2 border-rose-400 text-rose-950 dark:text-rose-100',
+          msgIconBg: 'bg-rose-100 dark:bg-rose-900/60 text-rose-800 dark:text-rose-300 border border-rose-300',
+          btnActive: 'bg-gradient-to-tr from-rose-600 via-pink-600 to-red-600 text-white ring-4 ring-rose-300/80 shadow-rose-500/50 scale-110 border-2 border-white',
+          btnNormal: 'bg-gradient-to-tr from-rose-600 via-pink-600 to-red-600 text-white border-2 border-white/90 hover:scale-105 active:scale-95 shadow-lg shadow-rose-500/40',
+          auraPing: 'bg-rose-400/40',
+          auraColor: '#fb7185',
+          geminiColor: '#fb7185',
+          actionBtn: 'bg-rose-600 hover:bg-rose-500 text-white',
+          chipHover: 'hover:bg-rose-600 hover:text-white hover:border-rose-600'
         };
       case 'emerald':
       default:
         return {
           iconBg: 'bg-emerald-600',
           titleColor: 'text-emerald-800 dark:text-emerald-300',
-          msgBg: 'bg-emerald-50/90 border-2 border-emerald-400 text-emerald-950',
-          msgIconBg: 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+          msgBg: 'bg-emerald-50/90 dark:bg-emerald-950/80 border-2 border-emerald-400 text-emerald-950 dark:text-emerald-100',
+          msgIconBg: 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300',
+          btnActive: 'bg-gradient-to-tr from-emerald-600 via-teal-600 to-emerald-500 text-white ring-4 ring-emerald-300/80 shadow-emerald-500/50 scale-110 border-2 border-white',
+          btnNormal: 'bg-gradient-to-tr from-emerald-600 via-teal-600 to-emerald-500 text-white border-2 border-white/90 hover:scale-105 active:scale-95 shadow-lg shadow-emerald-500/40',
+          auraPing: 'bg-emerald-400/40',
+          auraColor: '#34d399',
+          geminiColor: '#adffbc',
+          actionBtn: 'bg-emerald-600 hover:bg-emerald-500 text-white',
+          chipHover: 'hover:bg-emerald-600 hover:text-white hover:border-emerald-600'
         };
     }
   };
 
-  // Helper to speak back in clean, natural Arabic with 4-Layer Architecture (Native Android Bridge -> Native Capacitor TTS -> Universal Audio Stream -> Web SpeechSynthesis)
-  const speakArabic = async (text: string) => {
-    if (!text) return;
+  const isSpeakingCancelledRef = useRef<boolean>(false);
+  const speechTimeoutRef = useRef<any>(null);
 
-    // Stop previous audio playback & speech synthesis
+  // Helper to stop any ongoing speech synthesis immediately across all engines
+  const stopOngoingSpeech = async () => {
+    isSpeakingCancelledRef.current = true;
+    setIsSpeaking(false);
+
+    if (speechTimeoutRef.current) {
+      clearTimeout(speechTimeoutRef.current);
+      speechTimeoutRef.current = null;
+    }
+
     try {
       if (activeAudioRef.current) {
         activeAudioRef.current.pause();
         activeAudioRef.current.currentTime = 0;
         activeAudioRef.current = null;
       }
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
+    } catch (e) {}
+
+    try {
+      const { Capacitor } = await import('@capacitor/core');
+      if (Capacitor.isNativePlatform() || !!(window as any).Capacitor?.isNativePlatform?.()) {
+        const { TextToSpeech } = await import('@capacitor-community/text-to-speech');
+        await TextToSpeech.stop().catch(() => {});
       }
     } catch (e) {}
 
-    // Clean text for smooth Arabic speech synthesis
-    let cleanedText = text
-      .replace(/[\*#_`~]/g, '')
-      .replace(/<[^>]*>?/gm, '')
-      .replace(/المساعد الصوتي/g, 'أنا')
-      .replace(/تم بنجاح/g, 'تَمَّ بِنَجَاح')
-      .replace(/https?:\/\/\S+/g, '')
-      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '')
-      .trim();
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch (e) {}
+    }
 
+    try {
+      if ((window as any).AndroidInterface && typeof (window as any).AndroidInterface.stopSpeaking === 'function') {
+        (window as any).AndroidInterface.stopSpeaking();
+      }
+    } catch (e) {}
+  };
+
+  // Helper to speak back in clean, natural Arabic without diacritics/tashkeel using the phone's native default engine
+  const speakArabic = async (text: string) => {
+    if (!text) return;
+
+    // Reset cancellation flag
+    isSpeakingCancelledRef.current = false;
+
+    // Stop previous audio playback & speech synthesis
+    await stopOngoingSpeech();
+    isSpeakingCancelledRef.current = false;
+
+    // Clean text for pristine, natural Arabic speech synthesis without any diacritics / tashkeel (حركات النطق)
+    const cleanedText = cleanTextForArabicSpeech(text);
     if (!cleanedText) return;
+
+    if (isSpeakingCancelledRef.current || !isActiveRef.current) return;
 
     setIsSpeaking(true);
 
     const onSpeechFinished = () => {
+      if (isSpeakingCancelledRef.current) return;
       setIsSpeaking(false);
-      if (isActiveRef.current) {
-        setTimeout(() => restartListening(), 350);
-      }
+      setIsListening(false);
     };
 
-    const provider = voiceSettings.voiceEngineProvider || 'auto';
+    const gender = voiceSettings.voiceGender || 'male';
+    const effectivePitch = gender === 'male' ? 0.72 : gender === 'female' ? 1.05 : (voiceSettings.pitch || 0.95);
+    const effectiveRate = gender === 'male' ? 0.92 : (voiceSettings.rate || 0.95);
 
-    // Method 1: Android Native Interface Bridge (if provided by custom Android container)
+    // Method 1: Android Native Interface Bridge (Android WebView)
     try {
       if ((window as any).AndroidInterface && typeof (window as any).AndroidInterface.speakText === 'function') {
         (window as any).AndroidInterface.speakText(cleanedText);
         const estDuration = Math.min(8000, Math.max(1200, cleanedText.length * 65));
-        setTimeout(onSpeechFinished, estDuration);
+        setTimeout(() => {
+          if (!isSpeakingCancelledRef.current) onSpeechFinished();
+        }, estDuration);
         return;
       }
     } catch (e) {}
 
     // Method 2: Android Capacitor Native TTS (Samsung Note 20 Ultra / Android 13)
-    // Runs when in native platform or when specific samsung/google provider is chosen
     try {
       const { Capacitor } = await import('@capacitor/core');
       if (Capacitor.isNativePlatform() || !!(window as any).Capacitor?.isNativePlatform?.()) {
         const { TextToSpeech } = await import('@capacitor-community/text-to-speech');
         try { await TextToSpeech.stop(); } catch (e) {}
 
+        if (isSpeakingCancelledRef.current || !isActiveRef.current) return;
+
         let voiceIndex: number | undefined = undefined;
         try {
           const { voices } = await TextToSpeech.getSupportedVoices();
           if (voices && voices.length > 0) {
-            if (provider === 'samsung_voice' || provider === 'samsung_tts') {
-              const sIdx = voices.findIndex(v => (v.name || '').toLowerCase().includes('samsung') || (v.name || '').toLowerCase().includes('galaxy'));
-              if (sIdx >= 0) voiceIndex = sIdx;
-            } else if (provider === 'google_voice' || provider === 'google_tts') {
-              const gIdx = voices.findIndex(v => (v.name || '').toLowerCase().includes('google') || (v.name || '').toLowerCase().includes('speech services'));
-              if (gIdx >= 0) voiceIndex = gIdx;
-            }
+            const maleKeywords = ['male', 'رجل', 'ذكور', 'ذكر', 'ard', 'arb', 'arz', 'naayf', 'shakir', 'tarik', 'maged', 'salman', 'hamdan', 'ar-xa', 'ar-sa-x'];
+            const femaleKeywords = ['female', 'امرأة', 'أنثى', 'انثى', 'fatima', 'zariyah', 'layla', 'mariam', 'nour', 'zeina', 'salma'];
 
-            if (typeof voiceIndex === 'undefined') {
-              const maleKeywords = ['male', 'رجل', 'ذكور', 'ذكر', 'ard', 'arb', 'arz', 'naayf', 'shakir', 'tarik', 'maged', 'salman', 'hamdan', 'ar-xa', 'ar-sa-x'];
+            if (gender === 'male') {
               const maleIdx = voices.findIndex(v => 
                 ((v.lang || '').toLowerCase().replace('_', '-').startsWith('ar') || (v.name || '').toLowerCase().includes('arabic') || (v.name || '').includes('العربية')) &&
                 maleKeywords.some(kw => (v.name || '').toLowerCase().includes(kw))
               );
-              if (maleIdx >= 0) {
-                voiceIndex = maleIdx;
-              } else {
-                const anyArIdx = voices.findIndex(v => 
-                  (v.lang || '').toLowerCase().replace('_', '-').startsWith('ar') || 
-                  (v.name || '').toLowerCase().includes('arabic') || 
-                  (v.name || '').includes('العربية')
-                );
-                if (anyArIdx >= 0) voiceIndex = anyArIdx;
-              }
+              if (maleIdx >= 0) voiceIndex = maleIdx;
+            } else if (gender === 'female') {
+              const femIdx = voices.findIndex(v => 
+                ((v.lang || '').toLowerCase().replace('_', '-').startsWith('ar') || (v.name || '').toLowerCase().includes('arabic') || (v.name || '').includes('العربية')) &&
+                femaleKeywords.some(kw => (v.name || '').toLowerCase().includes(kw))
+              );
+              if (femIdx >= 0) voiceIndex = femIdx;
+            }
+
+            if (typeof voiceIndex === 'undefined') {
+              const anyArIdx = voices.findIndex(v => 
+                (v.lang || '').toLowerCase().replace('_', '-').startsWith('ar') || 
+                (v.name || '').toLowerCase().includes('arabic') || 
+                (v.name || '').includes('العربية')
+              );
+              if (anyArIdx >= 0) voiceIndex = anyArIdx;
             }
           }
         } catch (vErr) {}
@@ -432,8 +818,8 @@ export const VoiceAssistant = ({
         const speakOptions: any = {
           text: cleanedText,
           lang: 'ar-SA',
-          rate: voiceSettings.rate || 0.95,
-          pitch: voiceSettings.pitch || 0.88,
+          rate: effectiveRate,
+          pitch: effectivePitch,
           volume: voiceSettings.volume || 1.0,
           category: 'ambient',
         };
@@ -441,55 +827,18 @@ export const VoiceAssistant = ({
           speakOptions.voice = voiceIndex;
         }
 
+        if (isSpeakingCancelledRef.current || !isActiveRef.current) return;
         await TextToSpeech.speak(speakOptions);
-        onSpeechFinished();
+        if (!isSpeakingCancelledRef.current) {
+          onSpeechFinished();
+        }
         return;
       }
     } catch (nativeErr) {
-      console.warn("Capacitor Native TTS failed, switching to streaming audio:", nativeErr);
+      console.warn("Capacitor Native TTS fallback:", nativeErr);
     }
 
-    // Method 3: Pristine Natural Arabic Audio Stream (Universal across Web, Mobile, Capacitor)
-    // Used when provider is auto or gemini_stream, or as fallback
-    if (provider !== 'samsung_tts' && provider !== 'system_default') {
-      try {
-        const { getApiUrl } = await import('../lib/nativeService');
-        const ttsUrl = getApiUrl(`/api/assistant/tts?text=${encodeURIComponent(cleanedText)}`);
-        const audio = new Audio(ttsUrl);
-        activeAudioRef.current = audio;
-        audio.playbackRate = voiceSettings.rate || 1.0;
-
-        let hasFinished = false;
-        const completeOnce = () => {
-          if (!hasFinished) {
-            hasFinished = true;
-            activeAudioRef.current = null;
-            onSpeechFinished();
-          }
-        };
-
-        audio.onended = completeOnce;
-        audio.onerror = (audioErr) => {
-          console.warn("TTS Audio Stream playback failed, falling back to Web Speech:", audioErr);
-          activeAudioRef.current = null;
-          fallbackWebSpeech(cleanedText, onSpeechFinished);
-        };
-
-        const playPromise = audio.play();
-        if (playPromise !== undefined) {
-          playPromise.catch((playErr) => {
-            console.warn("Audio autoplay blocked, falling back to Web Speech:", playErr);
-            activeAudioRef.current = null;
-            fallbackWebSpeech(cleanedText, onSpeechFinished);
-          });
-        }
-        return;
-      } catch (streamErr) {
-        console.warn("Audio creation failed, falling back to Web Speech:", streamErr);
-      }
-    }
-
-    // Method 4: Browser Web SpeechSynthesis API Fallback
+    // Method 3: Device Default Web SpeechSynthesis API Fallback
     fallbackWebSpeech(cleanedText, onSpeechFinished);
   };
 
@@ -499,13 +848,21 @@ export const VoiceAssistant = ({
       return;
     }
 
+    if (isSpeakingCancelledRef.current || !isActiveRef.current) {
+      return;
+    }
+
     try {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(textToSpeak);
       utterance.lang = 'ar-SA';
+      const gender = voiceSettings.voiceGender || 'male';
+      const effectivePitch = gender === 'male' ? 0.72 : gender === 'female' ? 1.05 : (voiceSettings.pitch || 0.95);
+      const effectiveRate = gender === 'male' ? 0.92 : (voiceSettings.rate || 0.95);
+
       utterance.volume = voiceSettings.volume ?? 1.0;
-      utterance.rate = voiceSettings.rate ?? 0.95;
-      utterance.pitch = voiceSettings.pitch ?? 0.88;
+      utterance.rate = effectiveRate;
+      utterance.pitch = effectivePitch;
 
       let finished = false;
       const endFn = () => {
@@ -521,24 +878,41 @@ export const VoiceAssistant = ({
         endFn();
       };
 
-      const voices = window.speechSynthesis.getVoices();
-      const bestVoice = getBestArabicVoice(voiceSettings.voiceName, voiceSettings.voiceEngineProvider) || voices.find(v => 
-        (v.lang || '').toLowerCase().startsWith('ar') || (v.name || '').includes('Arabic') || (v.name || '').includes('العربية')
-      );
+      const bestVoice = getBestArabicVoice(gender, voiceSettings.voiceName);
       if (bestVoice) {
         utterance.voice = bestVoice;
+        utterance.lang = bestVoice.lang || 'ar-SA';
       }
 
-      window.speechSynthesis.speak(utterance);
+      // Android Chromium & WebView fix: cancel() right before speak() silences SpeechSynthesis.
+      // A small timeout with resume() guarantees voice output on Android 13 & modern browsers.
+      if (speechTimeoutRef.current) {
+        clearTimeout(speechTimeoutRef.current);
+      }
+      speechTimeoutRef.current = setTimeout(() => {
+        if (isSpeakingCancelledRef.current || !isActiveRef.current) {
+          try { window.speechSynthesis.cancel(); } catch (e) {}
+          return;
+        }
+        try {
+          if (window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+          }
+          window.speechSynthesis.speak(utterance);
+        } catch (spkErr) {
+          console.warn("SpeechSynthesis speak exception:", spkErr);
+          endFn();
+        }
+      }, 50);
 
       // Failsafe timer in case onend never fires
       setTimeout(() => {
         if (!finished && !window.speechSynthesis.speaking) {
           endFn();
         }
-      }, Math.min(10000, Math.max(2000, textToSpeak.length * 75)));
-    } catch (e) {
-      console.warn("Web SpeechSynthesis failed:", e);
+      }, Math.min(12000, Math.max(2500, textToSpeak.length * 80)));
+    } catch (err) {
+      console.error("Web Speech Synthesis error:", err);
       onFinish();
     }
   };
@@ -548,15 +922,33 @@ export const VoiceAssistant = ({
   // Send assistant reply: updates message, adds to conversational chat, and reads aloud in Arabic
   const sendAssistantReply = (replyText: string) => {
     setAssistantMessage(replyText);
-    setChatMessages(prev => [
-      ...prev,
-      {
-        id: `assistant-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        role: 'assistant',
+    
+    setChatMessages(prev => {
+      // Prevent adding exact duplicate assistant message if it was just added as the last message
+      const lastMsg = prev[prev.length - 1];
+      if (lastMsg && lastMsg.role === 'assistant' && lastMsg.text === replyText) {
+        return prev;
+      }
+      const msgId = `assistant-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      const msg = {
+        id: msgId,
+        role: 'assistant' as const,
         text: replyText,
         timestamp: new Date()
-      }
-    ]);
+      };
+
+      try {
+        db.voiceChats.put({
+          id: msgId,
+          role: 'assistant',
+          text: replyText,
+          timestamp: new Date().toISOString()
+        });
+      } catch (e) {}
+
+      return [...prev, msg];
+    });
+
     speakArabic(replyText);
     setIsProcessing(false);
   };
@@ -570,19 +962,47 @@ export const VoiceAssistant = ({
     const clean = rawText.trim();
     if (!clean) return;
 
+    // Deduping check: ignore duplicate prompt sent within 2.2 seconds
+    const now = Date.now();
+    if (lastCommittedTextRef.current === clean && (now - lastCommittedTimeRef.current) < 2200) {
+      return;
+    }
+    lastCommittedTextRef.current = clean;
+    lastCommittedTimeRef.current = now;
+
+    stopUnifiedSpeechRecognition();
+    setIsListening(false);
     currentSpokenBufferRef.current = '';
     setLiveInterimText('');
+    setTextInput(''); // Completely clear text input box without leaving leftover text
     setTranscript(clean);
 
-    setChatMessages(prev => [
-      ...prev,
-      {
-        id: `user-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    const userMsgId = `user-${now}-${Math.random().toString(36).substring(2, 6)}`;
+    const userMsg = {
+      id: userMsgId,
+      role: 'user' as const,
+      text: clean,
+      timestamp: new Date()
+    };
+
+    setChatMessages(prev => {
+      // Failsafe check to prevent duplicate user message in state
+      const lastMsg = prev[prev.length - 1];
+      if (lastMsg && lastMsg.role === 'user' && lastMsg.text === clean) {
+        return prev;
+      }
+      return [...prev, userMsg];
+    });
+
+    // Save user command to IndexedDB
+    try {
+      db.voiceChats.put({
+        id: userMsgId,
         role: 'user',
         text: clean,
-        timestamp: new Date()
-      }
-    ]);
+        timestamp: new Date().toISOString()
+      });
+    } catch (e) {}
 
     if (handleProcessSpeechRef.current) {
       handleProcessSpeechRef.current(clean);
@@ -645,6 +1065,36 @@ export const VoiceAssistant = ({
         return `عرض قائمة العملاء`;
       } else if (fnName === 'openCustomerTask') {
         return `فتح مهمة العميل ${args.customerName || ''}`;
+      } else if (fnName === 'openWindow') {
+        const namesMap: Record<string, string> = {
+          newTask: 'نافذة إضافة مهمة جديدة',
+          newCustomer: 'نافذة إضافة عميل',
+          newInventory: 'نافذة إضافة صنف للمخزون',
+          accounts: 'نافذة الحسابات والمعاملات',
+          debts: 'نافذة الديون والالتزامات',
+          flashSettings: 'إعدادات الواجهة الفلاشية',
+          voiceSettings: 'إعدادات المساعد الصوتي',
+          backup: 'نافذة النسخ الاحتياطي',
+          quickNotes: 'الملاحظات السريعة',
+          closeModals: 'إغلاق النوافذ'
+        };
+        return `فتح ${namesMap[args.windowName] || args.windowName}`;
+      } else if (fnName === 'toggleSetting') {
+        return `${args.enable ? 'تفعيل' : 'إلغاء تفعيل'} ${args.setting === 'flashTicker' ? 'الواجهة الفلاشية' : args.setting === 'darkMode' ? 'الوضع الليلي' : args.setting === 'voiceSpeech' ? 'النطق الصوتي' : args.setting}`;
+      } else if (fnName === 'setFlashTaskRange') {
+        return `تغيير نطاق مهام الواجهة الفلاشية`;
+      } else if (fnName === 'filterTasks') {
+        return `تصفية المهام لعرض (${args.status || 'الكل'})`;
+      } else if (fnName === 'addFinancialTransaction') {
+        return `تسجيل ${args.type === 'expense' ? 'مصروف' : 'إيراد'} بقيمة ${args.amount || 0}`;
+      } else if (fnName === 'addDebtAccount') {
+        return `تسجيل دين للمورد ${args.creditorName || ''}`;
+      } else if (fnName === 'payDebt') {
+        return `سداد دفعة للمورد ${args.creditorName || ''}`;
+      } else if (fnName === 'deleteCustomer') {
+        return `حذف العميل ${args.name || ''}`;
+      } else if (fnName === 'deleteInventoryItem') {
+        return `حذف الصنف ${args.name || ''}`;
       }
     } catch (e) {
       console.warn('Error formatting description:', e);
@@ -677,6 +1127,8 @@ export const VoiceAssistant = ({
           deposit: 0,
           currency: 'RY',
           notes: 'تمت الإضافة عبر المساعد الصوتي',
+          executionTime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          isAlarmActive: true,
           createdAt: new Date().toISOString()
         } as any);
         sessionActionStack.push({ type: 'addTask', data: { taskId: tId } });
@@ -728,15 +1180,16 @@ export const VoiceAssistant = ({
           if (target) {
             setActiveTaskId(target.id!);
             window.dispatchEvent(new CustomEvent('open-task-id', { detail: { taskId: target.id } }));
-            setPendingTaskSelection(null);
             const seq = matched.indexOf(target) + 1;
             return `تم فتح مهمة رقم (${seq}) للعميل ${customerName} (رقم #${target.id} - ${target.status}) بنجاح. ما هي التعديلات أو الإضافات التي تود القيام بها عليها؟`;
           }
         }
 
-        setPendingTaskSelection({ customerName, tasks: matched });
+        const latestTask = matched[matched.length - 1];
+        setActiveTaskId(latestTask.id!);
+        window.dispatchEvent(new CustomEvent('open-task-id', { detail: { taskId: latestTask.id } }));
         const listStr = matched.map((t, idx) => `مهمة رقم (${idx + 1}) - #${t.id} (${t.deviceType} - ${t.status})`).join('، ');
-        return `يوجد للعميل ${customerName} عدة مهام: ${listStr}. هل تود فتح المهمة رقم 1 أم 2 أم المعلقة أم قيد التنفيذ؟`;
+        return `تم فتح المهمة الأخيرة للعميل ${customerName} (#${latestTask.id} - ${latestTask.status}). المهام المسجلة له: ${listStr}.`;
       }
 
       else if (fnName === 'setTaskReminder') {
@@ -780,9 +1233,24 @@ export const VoiceAssistant = ({
         return `تم ضبط المنبه ${taskId ? 'للمهمة '+taskId : ''} بعد ${amount} ${unit}`;
       }
       else if (fnName === 'updateTaskStatus') {
-        const { taskId, status } = args;
-        const task = await db.tasks.get(Number(taskId));
-        if (task) {
+        const { taskId, customerName, status } = args;
+        let task: any = null;
+        if (taskId && !isNaN(Number(taskId))) {
+          task = await db.tasks.get(Number(taskId));
+        }
+        if (!task && customerName) {
+          const clean = String(customerName).trim().toLowerCase();
+          const all = await db.tasks.toArray();
+          const matched = all
+            .filter(t => t.customer && t.customer.toLowerCase().includes(clean))
+            .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+          if (matched.length > 0) task = matched[0];
+        }
+        if (!task && activeTaskId) {
+          task = await db.tasks.get(activeTaskId);
+        }
+
+        if (task && task.id) {
           const isDelivered = status === 'completed' || status === 'تم التسليم' || status === 'مكتملة ومسلمة' || status === 'مسلمة';
           const totalCost = task.cost || 0;
           const totalDeposit = (task.depositHistory && task.depositHistory.length > 0)
@@ -791,16 +1259,16 @@ export const VoiceAssistant = ({
           const balance = totalCost - totalDeposit;
           const shouldAutoArchive = isDelivered && balance <= 0;
 
-          await db.tasks.update(Number(taskId), { 
+          await db.tasks.update(task.id, { 
             status,
             updatedAt: new Date().toISOString(),
             ...(shouldAutoArchive ? { isArchived: true, hiddenAt: undefined } : {})
           });
           return shouldAutoArchive 
-            ? `تم تحديث حالة المهمة ${taskId} إلى ${status} وأرشفتها تلقائياً لاكتمال الحساب`
-            : `تم تحديث حالة المهمة ${taskId} إلى: ${status}`;
+            ? `تم تحديث حالة المهمة #${task.id} للعميل "${task.customer}" إلى ${status} وأرشفتها تلقائياً لاكتمال الحساب`
+            : `تم تحديث حالة المهمة #${task.id} للعميل "${task.customer}" إلى: ${status}`;
         }
-        return `المهمة رقم ${taskId} غير موجودة`;
+        return `لم يتم العثور على مهمة صيانة مطابقة لتعديل حالتها.`;
       } 
 
       else if (fnName === 'deleteTask') {
@@ -917,18 +1385,89 @@ export const VoiceAssistant = ({
       }
 
       else if (fnName === 'addInventoryItem') {
-        const { name, category, price, quantity } = args;
+        const { name, category, price, sellingPrice, costPrice, quantity, stock } = args;
         const itemId = await db.inventory.add({
           name: name || 'صنف جديد',
           category: category || 'قطع غيار',
-          sellingPrice: Number(price || 0),
-          costPrice: 0,
-          stock: Number(quantity || 1),
+          sellingPrice: Number(sellingPrice || price || 0),
+          costPrice: Number(costPrice || 0),
+          stock: Number(stock || quantity || 1),
           minStock: 2,
           currency: 'RY',
           code: 'INV-' + Math.floor(1000 + Math.random() * 9000)
         } as any);
-        return `تمت إضافة الصنف "${name}" إلى المخزون برقم #${itemId}`;
+        return `تمت إضافة الصنف "${name}" إلى المخزون بنجاح برقم #${itemId}`;
+      }
+
+      else if (fnName === 'updateInventoryItem') {
+        const { itemId, name, stock, sellingPrice } = args;
+        let item = null;
+        if (itemId) {
+          item = await db.inventory.get(Number(itemId));
+        } else if (name) {
+          item = await db.inventory.where('name').equalsIgnoreCase(name).first();
+          if (!item) {
+            const all = await db.inventory.toArray();
+            item = all.find(i => i.name.toLowerCase().includes(name.toLowerCase()));
+          }
+        }
+        if (item && item.id) {
+          const updates: any = {};
+          if (stock !== undefined) updates.stock = Number(stock);
+          if (sellingPrice !== undefined) updates.sellingPrice = Number(sellingPrice);
+          await db.inventory.update(item.id, updates);
+          return `تم تحديث بيانات الصنف "${item.name}" في المخزون بنجاح (الكمية: ${updates.stock ?? item.stock}، السعر: ${updates.sellingPrice ?? item.sellingPrice} ريال).`;
+        }
+        return `لم يتم العثور على الصنف المحدد في المخزون.`;
+      }
+
+      else if (fnName === 'updateCustomer') {
+        const { customerId, name, phone, classification } = args;
+        let customer = null;
+        if (customerId) {
+          customer = await db.customers.get(Number(customerId));
+        } else if (name) {
+          customer = await db.customers.where('name').equalsIgnoreCase(name).first();
+          if (!customer) {
+            const all = await db.customers.toArray();
+            customer = all.find(c => c.name.toLowerCase().includes(name.toLowerCase()));
+          }
+        }
+        if (customer && customer.id) {
+          const updates: any = {};
+          if (phone !== undefined) updates.phone = phone;
+          if (classification !== undefined) updates.classification = classification;
+          await db.customers.update(customer.id, updates);
+          return `تم تحديث بيانات العميل "${customer.name}" بنجاح.`;
+        }
+        return `لم يتم العثور على العميل المراد تعديل بياناته.`;
+      }
+
+      else if (fnName === 'addCashAccount') {
+        const { name, type, balance, currency } = args;
+        const aid = await db.cashAccounts?.add({
+          name: name || 'حساب جديد',
+          type: (type || 'cashbox') as any,
+          balance: Number(balance || 0),
+          currency: (currency || 'RY') as any,
+          createdAt: new Date().toISOString()
+        } as any);
+        return `تم إضافة الحساب النقدي "${name}" برصيد ${Number(balance || 0).toLocaleString()} ${currency || 'RY'} بنجاح (رقم #${aid}).`;
+      }
+
+      else if (fnName === 'updateTaskDetails') {
+        const { taskId, issue, deviceType, brand, cost } = args;
+        const task = await db.tasks.get(Number(taskId));
+        if (task) {
+          const updates: any = { updatedAt: new Date().toISOString() };
+          if (issue) updates.issue = issue;
+          if (deviceType) updates.deviceType = deviceType;
+          if (brand) updates.brand = brand;
+          if (cost !== undefined) updates.cost = Number(cost);
+          await db.tasks.update(Number(taskId), updates);
+          return `تم تعديل بيانات المهمة #${taskId} بنجاح.`;
+        }
+        return `المهمة رقم ${taskId} غير موجودة.`;
       }
 
       else if (fnName === 'updateTaskCost') {
@@ -1005,12 +1544,37 @@ export const VoiceAssistant = ({
         return `إجمالي المهام المسجلة: ${total}، منها ${pending} معلقة و ${inProgress} قيد التنفيذ.`;
       }
 
-      else if (fnName === 'getFinancialSummary') {
+      else if (fnName === 'getFinancialSummary' || fnName === 'getDailySummary') {
         const transactions = await db.transactions.toArray();
-        const income = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + (t.amount || 0), 0);
-        const expense = transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + (t.amount || 0), 0);
-        const net = income - expense;
-        return `المقبوضات: ${income}، المصروفات: ${expense}، والأرباح الصافية: ${net}`;
+        const todayStr = new Date().toISOString().split('T')[0];
+        const todayTrans = transactions.filter(t => (t.date || '').startsWith(todayStr));
+        const todayIncome = todayTrans.filter(t => t.type === 'income').reduce((sum, t) => sum + (t.amount || 0), 0);
+        const todayExpense = todayTrans.filter(t => t.type === 'expense').reduce((sum, t) => sum + (t.amount || 0), 0);
+        const todayNet = todayIncome - todayExpense;
+
+        const allIncome = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + (t.amount || 0), 0);
+        const allExpense = transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + (t.amount || 0), 0);
+        const allNet = allIncome - allExpense;
+
+        const allTasks = await db.tasks.toArray();
+        const readyTasks = allTasks.filter(t => t.status === 'جاهزة' || t.status === 'جاهز للتسليم');
+
+        if (todayTrans.length > 0) {
+          return `دخل اليوم: ${todayIncome.toLocaleString()} ريال، والمصروفات: ${todayExpense.toLocaleString()} ريال، وصافي أرباح اليوم: ${todayNet.toLocaleString()} ريال. ولديك ${readyTasks.length} أجهزة جاهزة للتسليم.`;
+        }
+        return `إجمالي المقبوضات: ${allIncome.toLocaleString()} ريال، والمصروفات: ${allExpense.toLocaleString()} ريال، والأرباح الصافية: ${allNet.toLocaleString()} ريال، ويوجد ${readyTasks.length} أجهزة جاهزة للتسليم.`;
+      }
+
+      else if (fnName === 'getReadyTasksSummary') {
+        window.dispatchEvent(new CustomEvent('voice-action', { detail: { action: 'filterTasks', status: 'جاهزة' } }));
+        const allTasks = await db.tasks.toArray();
+        const ready = allTasks.filter(t => t.status === 'جاهزة' || t.status === 'جاهز للتسليم');
+        if (ready.length === 0) {
+          return 'لا توجد أجهزة جاهزة للتسليم حالياً في جدول الصيانة.';
+        }
+        const sampleNames = ready.slice(0, 3).map(t => `${t.deviceType || 'جهاز'} ${t.brand || ''} للعميل ${t.customer || ''}`).join('، و ');
+        const extra = ready.length > 3 ? `، بالإضافة إلى ${ready.length - 3} أجهزة أخرى` : '';
+        return `لديك ${ready.length} أجهزة جاهزة للتسليم: ${sampleNames}${extra}.`;
       }
 
       else if (fnName === 'getTaskDetails') {
@@ -1030,32 +1594,108 @@ export const VoiceAssistant = ({
       }
       
       else if (fnName === 'addDeposit') {
-        const { taskId, amount } = args;
-        const task = await db.tasks.get(Number(taskId));
-        if (task) {
-          const newDeposit = (task.deposit || 0) + Number(amount);
-          const history = task.depositHistory || [];
+        const { taskId, customerName, amount, isLastTask } = args;
+        const numAmount = Number(amount || 0);
+        if (numAmount <= 0) return 'يرجى تحديد مبلغ الدفعة بشكل صحيح.';
+
+        let targetTask: any = null;
+
+        // 1. If explicit numeric taskId is provided
+        if (taskId && !isNaN(Number(taskId))) {
+          targetTask = await db.tasks.get(Number(taskId));
+        }
+
+        // 2. If customerName is provided (or if task not found by ID yet)
+        if (!targetTask && customerName) {
+          const cleanCust = String(customerName).trim().toLowerCase();
+          const allTasks = await db.tasks.toArray();
+          const matchedTasks = allTasks
+            .filter(t => t.customer && t.customer.toLowerCase().includes(cleanCust))
+            .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+          if (matchedTasks.length > 0) {
+            targetTask = matchedTasks[0]; // latest task for customer
+          } else {
+            // Customer might exist without tasks or partial name match on customers table
+            const allCust = await db.customers.toArray();
+            const matchedCust = allCust.find(c => c.name.toLowerCase().includes(cleanCust) || cleanCust.includes(c.name.toLowerCase()));
+            const finalCustName = matchedCust ? matchedCust.name : customerName;
+
+            // Record direct income transaction for customer
+            const transId = await db.transactions.add({
+              type: 'income',
+              amount: numAmount,
+              currency: 'RY',
+              date: new Date().toISOString(),
+              description: `سداد دفعة حساب للعميل ${finalCustName}`,
+              customerName: finalCustName,
+              addedBy: 'المساعد الصوتي'
+            } as any);
+
+            // Update default cash account balance
+            const accounts = await db.cashAccounts?.toArray().catch(() => []) || [];
+            if (accounts.length > 0) {
+              const firstAcc = accounts[0];
+              await db.cashAccounts?.update(firstAcc.id!, {
+                balance: (firstAcc.balance || 0) + numAmount
+              });
+            }
+
+            return `تم بنجاح تسجيل دفعة حساب بقيمة ${numAmount.toLocaleString()} ريال للعميل "${finalCustName}" (سند رقم #${transId}).`;
+          }
+        }
+
+        // 3. Fallback: Check activeTaskId or last overall task
+        if (!targetTask && !customerName) {
+          if (activeTaskId) {
+            targetTask = await db.tasks.get(activeTaskId);
+          }
+          if (!targetTask) {
+            const all = await db.tasks.toArray();
+            if (all.length > 0) {
+              all.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+              targetTask = all[0];
+            }
+          }
+        }
+
+        if (targetTask && targetTask.id) {
+          const newDeposit = (targetTask.deposit || 0) + numAmount;
+          const history = targetTask.depositHistory || [];
           history.push({
-            id: Math.random().toString(36).substr(2, 9),
-            amount: Number(amount),
-            currency: task.currency || 'RY',
+            id: 'dep-' + Math.random().toString(36).substr(2, 9),
+            amount: numAmount,
+            currency: targetTask.currency || 'RY',
             date: new Date().toISOString(),
-            note: 'إيداع عبر المساعد الصوتي'
+            note: 'دفعة سداد عبر المساعد الصوتي'
           });
-          await db.tasks.update(Number(taskId), { deposit: newDeposit, depositHistory: history });
+          await db.tasks.update(targetTask.id, { deposit: newDeposit, depositHistory: history });
           
           await db.transactions.add({
             type: 'income',
-            amount: Number(amount),
-            currency: task.currency || 'RY',
+            amount: numAmount,
+            currency: targetTask.currency || 'RY',
             date: new Date().toISOString(),
-            description: `دفعة مقدم لمهمة رقم ${taskId}`,
-            customerName: task.customer,
-            taskId: Number(taskId)
+            description: `دفعة سداد لمهمة رقم #${targetTask.id} (${targetTask.deviceType || 'جهاز'} ${targetTask.brand || ''})`,
+            customerName: targetTask.customer,
+            taskId: targetTask.id,
+            addedBy: 'المساعد الصوتي'
           } as any);
-          return `تم تسجيل دفعة بقيمة ${amount} للمهمة #${taskId}`;
+
+          // Update default cash account balance
+          const accounts = await db.cashAccounts?.toArray().catch(() => []) || [];
+          if (accounts.length > 0) {
+            const firstAcc = accounts[0];
+            await db.cashAccounts?.update(firstAcc.id!, {
+              balance: (firstAcc.balance || 0) + numAmount
+            });
+          }
+
+          const rem = Math.max(0, (targetTask.cost || 0) - newDeposit);
+          return `تم بنجاح تسجيل دفعة بقيمة ${numAmount.toLocaleString()} ريال للمهمة #${targetTask.id} للعميل "${targetTask.customer}" (${targetTask.deviceType} ${targetTask.brand}). المتبقي: ${rem.toLocaleString()} ريال.`;
         }
-        return `المهمة ${taskId} غير موجودة`;
+
+        return `لم يتم العثور على أي مهمة أو عميل مطابق لتسجيل الدفعة.`;
       } 
       
       else if (fnName === 'addDeviceModel') {
@@ -1089,6 +1729,318 @@ export const VoiceAssistant = ({
           return `تم جهيز تفاصيل المهمة وفتح الواتساب`;
         }
         return `المهمة غير موجودة`;
+      } else if (fnName === 'openWindow') {
+        const { windowName } = args;
+        if (windowName === 'closeModals' || windowName === 'close') {
+          window.dispatchEvent(new CustomEvent('voice-action', { detail: { action: 'closeModals' } }));
+          return 'تم إغلاق كافة النوافذ المفتوحة بنجاح.';
+        }
+        if (windowName === 'voiceSettings') {
+          setIsSettingsOpen(true);
+          return 'تم فتح نافذة إعدادات المساعد الصوتي.';
+        }
+        if (windowName === 'chat_history') {
+          setIsChatHistoryModalOpen(true);
+          return 'تم فتح سجل محادثات وأوامر المساعد الصوتي.';
+        }
+        if (windowName === 'ui_settings') {
+          window.dispatchEvent(new CustomEvent('open-modal-voice', { detail: { modal: 'ui_settings' } }));
+          return 'تم فتح نافذة تخصيص وإعدادات الواجهة والمظهر.';
+        }
+        if (windowName === 'user_management') {
+          window.dispatchEvent(new CustomEvent('open-modal-voice', { detail: { modal: 'user_management' } }));
+          return 'تم فتح نافذة إدارة المستخدمين والصلاحيات.';
+        }
+        if (windowName === 'export_settings') {
+          window.dispatchEvent(new CustomEvent('open-modal-voice', { detail: { modal: 'export_settings' } }));
+          return 'تم فتح نافذة إعدادات التصدير والطباعة.';
+        }
+        if (windowName === 'daily_shortcuts') {
+          window.dispatchEvent(new CustomEvent('open-modal-voice', { detail: { modal: 'daily_shortcuts' } }));
+          return 'تم فتح نافذة اختصارات البند اليومي.';
+        }
+        if (windowName === 'rates') {
+          window.dispatchEvent(new CustomEvent('open-modal-voice', { detail: { modal: 'rates' } }));
+          return 'تم فتح نافذة أسعار الصرف والعملات.';
+        }
+        if (windowName === 'omni_preview') {
+          window.dispatchEvent(new CustomEvent('open-modal-voice', { detail: { modal: 'omni_preview' } }));
+          return 'تم فتح شاشة اللمحة الشاملة والمعاينة الخاطفة للبيانات.';
+        }
+        if (windowName === 'backup') {
+          window.dispatchEvent(new CustomEvent('open-modal-voice', { detail: { modal: 'backup' } }));
+          return 'تم فتح نافذة النسخ الاحتياطي وإدارة البيانات.';
+        }
+        if (windowName === 'flashSettings') {
+          window.dispatchEvent(new CustomEvent('voice-action', { detail: { action: 'flashSettings' } }));
+          return 'تم فتح نافذة إعدادات الواجهة الفلاشية.';
+        }
+        window.dispatchEvent(new CustomEvent('voice-action', { detail: { action: windowName } }));
+        const namesMap: Record<string, string> = {
+          newTask: 'إضافة مهمة صيانة جديدة',
+          newCustomer: 'دليل وإضافة العملاء',
+          newInventory: 'إضافة صنف للمخزون والمستودع',
+          accounts: 'الحسابات والمعاملات المالية',
+          debts: 'الديون والالتزامات',
+          backup: 'النسخ الاحتياطي السحابي',
+          quickNotes: 'الملاحظات السريعة'
+        };
+        return `تم فتح شاشة ${namesMap[windowName] || windowName} بنجاح دون الحاجة للنقر على الشاشة.`;
+      } else if (fnName === 'toggleSetting') {
+        const { setting, enable } = args;
+        const isTrue = enable === true || enable === 'true' || enable === 1;
+        if (setting === 'flashTicker') {
+          window.dispatchEvent(new CustomEvent('voice-action', { detail: { action: 'toggleFlashTicker', value: isTrue } }));
+          return isTrue ? 'تم تفعيل وإظهار شريط المهام الفلاشي.' : 'تم إيقاف وإخفاء شريط المهام الفلاشي.';
+        }
+        if (setting === 'darkMode') {
+          window.dispatchEvent(new CustomEvent('voice-action', { detail: { action: 'toggleDarkMode', value: isTrue } }));
+          return isTrue ? 'تم تفعيل الوضع الليلي (المظلم).' : 'تم تفعيل الوضع النهاري (الفاتح).';
+        }
+        if (setting === 'voiceSpeech') {
+          const cur = getVoiceSettings();
+          saveVoiceSettings({ ...cur, autoSpeak: isTrue });
+          setVoiceSettings(prev => ({ ...prev, autoSpeak: isTrue }));
+          return isTrue ? 'تم تفعيل النطق الصوتي لردود المساعد.' : 'تم إيقاف النطق الصوتي وجعله صامتاً.';
+        }
+        if (setting === 'assistantIcon') {
+          window.dispatchEvent(new CustomEvent('voice-action', { detail: { action: 'toggleAssistantFloating', value: isTrue } }));
+          return isTrue ? 'تم إظهار أيقونة المساعد.' : 'تم إخفاء أيقونة المساعد.';
+        }
+        return `تم ضبط إعداد ${setting} بنجاح.`;
+      } else if (fnName === 'setFlashTaskRange') {
+        const { range } = args;
+        const validRanges = ['1day', '2days', '3days', '4days', '1week', '1month'];
+        const targetRange = validRanges.includes(range) ? range : '2days';
+        window.dispatchEvent(new CustomEvent('voice-action', { detail: { action: 'setFlashRange', range: targetRange } }));
+        const labels: Record<string, string> = {
+          '1day': 'اليوم القادم',
+          '2days': 'اليومين القادمين',
+          '3days': 'الثلاثة أيام القادمة',
+          '4days': 'الأربعة أيام القادمة',
+          '1week': 'الأسبوع القادم',
+          '1month': 'الشهر القادم'
+        };
+        return `تم تغيير نطاق عرض مهام الواجهة الفلاشية إلى: ${labels[targetRange] || targetRange}.`;
+      } else if (fnName === 'filterTasks') {
+        const { status } = args;
+        window.dispatchEvent(new CustomEvent('voice-action', { detail: { action: 'filterTasks', status: status || 'الكل' } }));
+        return `تم تصفية قائمة المهام لعرض: ${status || 'كافة المهام'}.`;
+      } else if (fnName === 'addFinancialTransaction') {
+        const { type, amount, description, category } = args;
+        const transType = (type === 'expense' || type === 'صرف' || type === 'مصروف') ? 'expense' : 'income';
+        const numAmount = Number(amount || 0);
+        const transId = await db.transactions.add({
+          type: transType,
+          amount: numAmount,
+          currency: 'RY',
+          date: new Date().toISOString(),
+          description: description || (transType === 'expense' ? 'مصروف عام' : 'إيراد صيانة'),
+          category: category || (transType === 'expense' ? 'مصروفات' : 'إيرادات'),
+        } as any);
+
+        const accounts = await db.cashAccounts?.toArray().catch(() => []) || [];
+        if (accounts.length > 0) {
+          const firstAcc = accounts[0];
+          const diff = transType === 'income' ? numAmount : -numAmount;
+          await db.cashAccounts?.update(firstAcc.id!, {
+            balance: (firstAcc.balance || 0) + diff
+          });
+        }
+
+        return `تم تسجيل المعاملة المالية (${transType === 'expense' ? 'مصروف' : 'إيراد'} بقيمة ${numAmount.toLocaleString()} ريال: ${description || ''}) برقم #${transId}.`;
+      } else if (fnName === 'addDebtAccount') {
+        const { creditorName, totalAmount, purpose, currency } = args;
+        const debtId = await db.debtAccounts?.add({
+          name: creditorName || 'مورد عام',
+          creditorName: creditorName || 'مورد عام',
+          totalAmount: Number(totalAmount || 0),
+          paidAmount: 0,
+          currency: (currency as any) || 'RY',
+          purpose: purpose || 'شراء بضاعة/التزام',
+          dueDate: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().split('T')[0],
+          status: 'active',
+          payments: [],
+          createdAt: new Date().toISOString()
+        } as any);
+        return `تم تسجيل دين جديد للمورد "${creditorName}" بمبلغ ${Number(totalAmount).toLocaleString()} ${currency || 'ريال'} برقم #${debtId}.`;
+      } else if (fnName === 'payDebt') {
+        const { creditorName, debtId, amount } = args;
+        const numAmount = Number(amount || 0);
+        let debt = null;
+        if (debtId) {
+          debt = await db.debtAccounts?.get(Number(debtId));
+        } else if (creditorName) {
+          const debts = await db.debtAccounts?.toArray() || [];
+          debt = debts.find((d: any) => (d.creditorName || d.name || '').toLowerCase().includes(creditorName.toLowerCase()));
+        }
+        if (debt && debt.id) {
+          const newPaid = (debt.paidAmount || 0) + numAmount;
+          const isFull = newPaid >= (debt.totalAmount || 0);
+          const currentPayments = Array.isArray(debt.payments) ? [...debt.payments] : [];
+          currentPayments.push({
+            id: Date.now(),
+            amount: numAmount,
+            date: new Date().toISOString(),
+            notes: 'سداد دفعة بالأمر الصوتي'
+          });
+          await db.debtAccounts?.update(debt.id, {
+            paidAmount: newPaid,
+            status: isFull ? 'settled' : 'active',
+            payments: currentPayments,
+            updatedAt: new Date().toISOString()
+          } as any);
+          await db.transactions.add({
+            type: 'expense',
+            amount: numAmount,
+            currency: debt.currency || 'RY',
+            date: new Date().toISOString(),
+            description: `سداد دفعة من دين المورد ${debt.creditorName || debt.name}`,
+            category: 'سداد ديون'
+          } as any);
+          return `تم سداد ${numAmount.toLocaleString()} ريال للمورد "${debt.creditorName || debt.name}" (المتبقي: ${Math.max(0, (debt.totalAmount || 0) - newPaid).toLocaleString()} ريال).`;
+        }
+        return `لم يتم العثور على حساب الدين للمورد ${creditorName || ''}.`;
+      } else if (fnName === 'deleteCustomer') {
+        const { customerId, name } = args;
+        let customer = null;
+        if (customerId) {
+          customer = await db.customers.get(Number(customerId));
+        } else if (name) {
+          const all = await db.customers.toArray();
+          customer = all.find((c: any) => c.name.toLowerCase().includes(name.toLowerCase()));
+        }
+        if (customer && customer.id) {
+          await db.customers.delete(customer.id);
+          return `تم حذف العميل "${customer.name}" بنجاح.`;
+        }
+        return `لم يتم العثور على العميل المراد حذفه.`;
+      } else if (fnName === 'deleteInventoryItem') {
+        const { itemId, name } = args;
+        let item = null;
+        if (itemId) {
+          item = await db.inventory.get(Number(itemId));
+        } else if (name) {
+          const all = await db.inventory.toArray();
+          item = all.find((i: any) => i.name.toLowerCase().includes(name.toLowerCase()));
+        }
+        if (item && item.id) {
+          await db.inventory.delete(item.id);
+          return `تم حذف الصنف "${item.name}" من المخزون بنجاح.`;
+        }
+        return `لم يتم العثور على الصنف المراد حذفه من المخزون.`;
+      } else if (fnName === 'addDropdownOption') {
+        const { listName, optionValue } = args;
+        if (optionValue && optionValue.trim()) {
+          const val = optionValue.trim();
+          window.dispatchEvent(new CustomEvent('add-dropdown-option-voice', { detail: { listName, optionValue: val } }));
+          return `تمت إضافة الخيار "${val}" إلى قائمة ${listName || 'الخيارات المنسدلة'} بنجاح.`;
+        }
+        return `يرجى تحديد النص المراد إضافته للقائمة المنسدلة.`;
+      } else if (fnName === 'addCustomerPhone') {
+        const { customerName, phone } = args;
+        if (customerName) {
+          const all = await db.customers.toArray();
+          const customer = all.find(c => c.name.toLowerCase().includes(customerName.toLowerCase()));
+          if (customer && customer.id) {
+            await db.customers.update(customer.id, { phone: phone || '' });
+            return `تم تحديث وحفظ رقم الهاتف ${phone || ''} للعميل "${customer.name}" بنجاح.`;
+          } else {
+            const cid = await db.customers.add({
+              name: customerName,
+              phone: phone || '',
+              address: '',
+              classification: 'عادي'
+            });
+            return `تم تسجيل العميل "${customerName}" وحفظ رقم الهاتف ${phone || ''} له برقم #${cid}.`;
+          }
+        }
+        return `يرجى تحديد اسم العميل لإضافة رقم الهاتف.`;
+      } else if (fnName === 'updateCustomerTaskStatus') {
+        const { customerName, status } = args;
+        if (customerName && status) {
+          const allTasks = await db.tasks.toArray();
+          const matched = allTasks.filter(t => t.customer && t.customer.toLowerCase().includes(customerName.toLowerCase()));
+          if (matched.length > 0) {
+            const latestTask = matched[matched.length - 1];
+            await db.tasks.update(latestTask.id!, { status, updatedAt: new Date().toISOString() });
+            return `تم تغيير حالة المهمة #${latestTask.id} للعميل "${latestTask.customer}" إلى "${status}" بنجاح.`;
+          }
+          return `لم يتم العثور على أجهزة أو مهام مسجلة للعميل ${customerName}.`;
+        }
+        return `يرجى تحديد العميل والحالة الجديدة.`;
+      } else if (fnName === 'exportTaskOrAccountDocument') {
+        const { targetType, identifier } = args;
+        if (targetType === 'task') {
+          const tId = Number(identifier) || parseInt(String(identifier).replace(/\D/g, ''));
+          if (tId) {
+            window.dispatchEvent(new CustomEvent('open-task-id', { detail: { taskId: tId, print: true } }));
+            return `تم فتح وطباعة سند ومستند المهمة رقم #${tId} بنجاح.`;
+          }
+        } else {
+          window.dispatchEvent(new CustomEvent('open-account-report', { detail: { identifier } }));
+          return `تم فتح كشف حساب ومستند "${identifier}" للتصدير والطباعة بنجاح.`;
+        }
+        return `تم تصدير وإخراج المستند المطلوبة.`;
+      } else if (fnName === 'getCustomerData') {
+        const { customerName } = args;
+        if (customerName) {
+          const customers = await db.customers.toArray();
+          const cust = customers.find(c => c.name.toLowerCase().includes(customerName.toLowerCase()));
+          const tasks = await db.tasks.toArray();
+          const custTasks = tasks.filter(t => t.customer && t.customer.toLowerCase().includes(customerName.toLowerCase()));
+          
+          if (!cust && custTasks.length === 0) {
+            return `لم يتم العثور على أي بيانات مسجلة للعميل "${customerName}".`;
+          }
+          
+          const phone = cust?.phone || custTasks.find(t => t.customerPhones && t.customerPhones.length > 0)?.customerPhones?.[0] || 'غير مسجل';
+          const tasksSummary = custTasks.map(t => `• مهمة #${t.id}: ${t.deviceType || 'جهاز'} ${t.brand || ''} - العطل: ${t.issue || ''} - الحالة: ${t.status || 'معلقة'} - التكلفة: ${t.cost || 0}`).join('\n');
+          
+          return `بيانات العميل "${cust?.name || customerName}":
+• الهاتف: ${phone}
+• التصنيف: ${cust?.classification || 'عادي'}
+• عدد المهام: ${custTasks.length}
+${tasksSummary ? 'تفاصيل المهام:\n' + tasksSummary : 'لا توجد مهام حالية'}`;
+        }
+        return 'يرجى تحديد اسم العميل لاستخراج البيانات.';
+      } else if (fnName === 'getInventoryItemData') {
+        const { itemName } = args;
+        if (itemName) {
+          const items = await db.inventory.toArray();
+          const matched = items.find(i => i.name.toLowerCase().includes(itemName.toLowerCase()));
+          if (matched) {
+            return `تفاصيل الصنف "${matched.name}":
+• الكود: ${matched.code || 'بدون'}
+• القسم: ${matched.category || 'عام'}
+• المتوفر بالمخزون: ${matched.stock || 0}
+• سعر البيع: ${matched.sellingPrice || 0} ريال
+• سعر التكلفة: ${matched.costPrice || 0} ريال`;
+          }
+          return `لم يتم العثور على الصنف "${itemName}" في المخزون.`;
+        }
+        return 'يرجى تحديد اسم الصنف.';
+      }
+
+      else if (fnName === 'addCurrency' || fnName === 'deleteCurrency') {
+        const { currencyName } = args;
+        window.dispatchEvent(new CustomEvent('open-modal-voice', { detail: { modal: 'rates' } }));
+        return `تم فتح شاشة أسعار الصرف والعملات لإجراء العملية على العملة "${currencyName || ''}" بنجاح.`;
+      }
+
+      else if (fnName === 'exportData' || fnName === 'saveReport') {
+        window.dispatchEvent(new CustomEvent('open-modal-voice', { detail: { modal: 'export_settings' } }));
+        return 'تم فتح نافذة تصدير وحفظ البيانات والتقارير بملفات Excel / PDF / JSON بنجاح.';
+      }
+
+      else if (fnName === 'importData') {
+        window.dispatchEvent(new CustomEvent('open-modal-voice', { detail: { modal: 'backup' } }));
+        return 'تم فتح نافذة استيراد واسترجاع ملفات البيانات والنسخ الاحتياطي بنجاح.';
+      }
+
+      else if (fnName === 'printReport') {
+        window.dispatchEvent(new CustomEvent('open-modal-voice', { detail: { modal: 'export_settings' } }));
+        return 'تم فتح نافذة إعدادات الطباعة والتصدير للمستندات والتقارير بنجاح.';
       }
     } catch (err: any) {
       console.error("Tool execution error:", err);
@@ -1097,349 +2049,7 @@ export const VoiceAssistant = ({
     return 'تم الإجراء بنجاح';
   };
 
-  // Local Arabic NLP parser fallback for fast offline recognition
-  const parseLocalCommand = (text: string): { handled: boolean; fnName?: string; args?: any; description?: string } => {
-    const clean = text.trim().toLowerCase();
-    
-    // 0. Pending task selection check (when multiple tasks existed for a customer)
-    if (pendingTaskSelection) {
-      const custName = pendingTaskSelection.customerName;
-      const choiceVal = clean;
-      setPendingTaskSelection(null);
-      return {
-        handled: true,
-        fnName: 'openCustomerTask',
-        args: { customerName: custName, choice: choiceVal },
-        description: getCommandDescription('openCustomerTask', { customerName: custName })
-      };
-    }
 
-    // Customer Task Opening Intent: e.g. "افتح مهمة العميل محمد رقم 1", "مهمة أحمد 2"
-    const openCustTaskMatch = clean.match(/(?:افتح|فتح|عرض|هات|أريد|مهمة|مهام)\s+(?:مهمة|مهام)?\s*(?:العميل|لعميل|للعميل|عميل)?\s*(.+)/i);
-    if (openCustTaskMatch) {
-      let rawText = openCustTaskMatch[1].trim();
-      let choiceNum: string | undefined = undefined;
-      const numEndMatch = rawText.match(/(.+?)\s+(?:رقم\s*)?(\d+)$/);
-      if (numEndMatch) {
-        rawText = numEndMatch[1].trim();
-        choiceNum = numEndMatch[2];
-      }
-      const customerName = rawText;
-      if (customerName && !/^(المهام|العملاء|المستودع|المحاسبة|التقارير|الإعدادات)$/.test(customerName)) {
-        return {
-          handled: true,
-          fnName: 'openCustomerTask',
-          args: { customerName, choice: choiceNum },
-          description: getCommandDescription('openCustomerTask', { customerName })
-        };
-      }
-    }
-
-    // Active Task Shorthand Modifications (when a task window is currently open)
-    if (activeTaskId) {
-      // 1. Status update shorthand
-      const statusShortMatch = clean.match(/(?:تحديث|تغيير|تعديل|اجعل)\s+الحالة\s+(?:الى|إلى|بحالة)?\s*(.+)/) || clean.match(/(?:الحالة|بحالة)\s+(.+)/);
-      if (statusShortMatch) {
-        const newStatus = statusShortMatch[1].trim();
-        return {
-          handled: true,
-          fnName: 'updateTaskStatus',
-          args: { taskId: activeTaskId, status: newStatus },
-          description: getCommandDescription('updateTaskStatus', { taskId: activeTaskId, status: newStatus })
-        };
-      }
-
-      // 2. Deposit shorthand
-      const depShortMatch = clean.match(/(?:إضافة|اضافة|أضف|اضف)?\s*دفعة\s+(\d+)/);
-      if (depShortMatch) {
-        const amount = depShortMatch[1];
-        return {
-          handled: true,
-          fnName: 'addDeposit',
-          args: { taskId: activeTaskId, amount },
-          description: getCommandDescription('addDeposit', { taskId: activeTaskId, amount })
-        };
-      }
-
-      // 3. Cost update shorthand
-      const costShortMatch = clean.match(/(?:تعديل|تغيير|اجعل|تحديد)\s+التكلفة\s+(?:الى|إلى|هي|بـ)?\s*(\d+)/);
-      if (costShortMatch) {
-        const cost = costShortMatch[1];
-        return {
-          handled: true,
-          fnName: 'updateTaskCost',
-          args: { taskId: activeTaskId, cost },
-          description: getCommandDescription('updateTaskCost', { taskId: activeTaskId, cost })
-        };
-      }
-
-      // 4. Delete shorthand
-      if (/^(?:حذف|امسح|إزالة)\s*(?:المهمة|مهمة)?$/.test(clean)) {
-        return {
-          handled: true,
-          fnName: 'deleteTask',
-          args: { taskId: activeTaskId },
-          description: getCommandDescription('deleteTask', { taskId: activeTaskId })
-        };
-      }
-    }
-
-    // 1. Google Drive Backup Intent
-    if (/نسخ|درايف|سحابي|تصدير|درائف|backup/i.test(clean) && /احتياط|درايف|جوجل|سحاب|درائف/i.test(clean)) {
-      return {
-        handled: true,
-        fnName: 'triggerDriveBackup',
-        args: {},
-        description: getCommandDescription('triggerDriveBackup', {})
-      };
-    }
-
-    // 2. Navigation Intent
-    if (/(?:فتح|انتقال|ذهاب|عرض|شاشة|صفحة|قسم)\s+(إعدادات|اعدادات|حسابات|محاسبة|مستودع|مخزون|عملاء|مهام|تقارير|رئيسية)/i.test(clean) || /^(المهام|العملاء|المستودع|المحاسبة|التقارير|الإعدادات)$/.test(clean)) {
-      let tabId = 'tasks';
-      let tabName = 'المهام';
-      if (/إعدادات|اعدادات/.test(clean)) { tabId = 'settings'; tabName = 'الإعدادات'; }
-      else if (/حسابات|محاسبة/.test(clean)) { tabId = 'accounting'; tabName = 'المحاسبة'; }
-      else if (/مستودع|مخزون/.test(clean)) { tabId = 'inventory'; tabName = 'المستودع'; }
-      else if (/عملاء/.test(clean)) { tabId = 'customers'; tabName = 'العملاء'; }
-      else if (/مهام/.test(clean)) { tabId = 'tasks'; tabName = 'المهام'; }
-      else if (/تقارير/.test(clean)) { tabId = 'reports'; tabName = 'التقارير'; }
-
-      return {
-        handled: true,
-        fnName: 'openTab',
-        args: { tabId, tabName },
-        description: getCommandDescription('openTab', { tabName })
-      };
-    }
-
-    // 3. Count / Status Query Intent
-    if (/(?:كم|عدد|إحصائية)\s+(?:المهام|مهام)/i.test(clean) || clean === 'كم عدد المهام') {
-      return {
-        handled: true,
-        fnName: 'countTasks',
-        args: {},
-        description: getCommandDescription('countTasks', {})
-      };
-    }
-
-    // 4. Financial Query
-    if (/مالي|أرباح|مقبوضات|مصروفات|حسابات|تقرير مالي|التقرير المالي/i.test(clean)) {
-      return {
-        handled: true,
-        fnName: 'getFinancialSummary',
-        args: {},
-        description: getCommandDescription('getFinancialSummary', {})
-      };
-    }
-
-    // 4.1 Cash box / Balance Query
-    if (/(?:رصيد|فلوس|مبلغ|كم في|كم باقي في)\s*(?:الصندوق|الخزينة|الدرج|الصندوق المتاح|الخزينه)/i.test(clean) || clean.includes('رصيد الصندوق') || clean.includes('رصيد الخزينة')) {
-      return {
-        handled: true,
-        fnName: 'getBoxBalance',
-        args: {},
-        description: 'معرفة رصيد الصندوق والخزينة المتاح'
-      };
-    }
-
-    // 4.2 Customer Debts Query
-    if (/(?:ديون|مستحقات|متبقي|بواقي|كم الديون|ديون العملاء|ديون الزبائن|باقي على العملاء)/i.test(clean)) {
-      return {
-        handled: true,
-        fnName: 'getDebtsSummary',
-        args: {},
-        description: 'معرفة إجمالي ديون ومستحقات العملاء المتبقية'
-      };
-    }
-
-    // 4.3 Financial Center & Net Worth Query
-    if (/(?:المركز المالي|راس المال|رأس المال|الأصول|الاصول|صافي رأس المال|مؤشرات المركز المالي)/i.test(clean)) {
-      return {
-        handled: true,
-        fnName: 'getFinancialCenterDetails',
-        args: {},
-        description: 'معرفة بيانات ومؤشرات المركز المالي ورأس المال والأصول'
-      };
-    }
-
-    // 4.4 Cash Accounts & Vaults Query
-    if (/(?:الحسابات النقدية|الخزائن|البنوك|المحافظ|حسابات الخزائن|ارصدة الحسابات|أرصدة الحسابات|أرصدة الخزائن|ارصدة الخزائن)/i.test(clean)) {
-      return {
-        handled: true,
-        fnName: 'listCashAccounts',
-        args: {},
-        description: 'عرض تفاصيل وأرصدة كافة الحسابات النقدية والخزائن'
-      };
-    }
-
-    // 4.5 Debts to Creditors / Liabilities Query
-    if (/(?:الديون التي علينا|ديون الموردين|التزامات|الالتزامات|ديون علينا|الممولين)/i.test(clean)) {
-      return {
-        handled: true,
-        fnName: 'listDebts',
-        args: {},
-        description: 'عرض تفاصيل الديون والالتزامات القائمة للموردين والممولين'
-      };
-    }
-
-    // 4.6 Inventory Query
-    if (/(?:مخزون|المخزون|قطع الغيار|قطع غيار|بضاعة|الأصناف)/i.test(clean) && /(?:كم|عدد|فحص|جرد|عرض|حالة)/i.test(clean)) {
-      return {
-        handled: true,
-        fnName: 'getInventorySummary',
-        args: {},
-        description: 'جرد أصناف المخزون وقطع الغيار'
-      };
-    }
-
-    // 5. Customers List Query
-    if (/(?:عرض|قائمة|كم عدد)\s+(?:العملاء|عملاء)/i.test(clean)) {
-      return {
-        handled: true,
-        fnName: 'listCustomers',
-        args: {},
-        description: getCommandDescription('listCustomers', {})
-      };
-    }
-
-    // 6. Search intent
-    if (clean.startsWith('بحث عن') || clean.startsWith('ابحث عن') || clean.startsWith('بحث')) {
-      const q = clean.replace(/^(بحث عن|ابحث عن|بحث)\s*/, '');
-      if (q) {
-        return {
-          handled: true,
-          fnName: 'searchQuery',
-          args: { query: q },
-          description: getCommandDescription('searchQuery', { query: q })
-        };
-      }
-    }
-
-    // 6.5 Reminder Intent
-    if (/(?:تنبيه|تذكير|ذكرني|منبه)/i.test(clean)) {
-      let amount = null;
-      let unit = '';
-      const timeMatch = clean.match(/بعد\s*(\d+)\s*(دقيقة|ساعة|دقائق|ساعات|دقيقه|ساعه|ثانية|ثواني)/i);
-      if (timeMatch) {
-         amount = parseInt(timeMatch[1], 10);
-         unit = timeMatch[2];
-      }
-      
-      let taskId = activeTaskId ? String(activeTaskId) : undefined;
-      const taskMatch = clean.match(/(?:مهمة|المهمة)\s*(?:رقم\s*)?(\d+)/i);
-      if (taskMatch) {
-         taskId = taskMatch[1];
-      }
-      
-      if (amount) {
-         return {
-            handled: true,
-            fnName: 'setTaskReminder',
-            args: { taskId, amount, unit },
-            description: getCommandDescription('setTaskReminder', { taskId, amount, unit })
-         };
-      }
-    }
-
-    // 7. Add Task intent: e.g. "إضافة مهمة للعميل محمد جالاكسي اس 21 الشاشة مكسورة"
-    const addTaskMatch = clean.match(/(?:إضافة|اضافة|أضف|اضف|إنشاء|انشاء)\s+مهمة\s+(?:جديدة\s+)?(?:لـ|للعميل|لعميل)?\s*([^\d]+)?/i);
-    if (addTaskMatch) {
-      const rest = addTaskMatch[1] ? addTaskMatch[1].trim() : '';
-      const parts = rest.split(/\s+/);
-      const customerName = parts[0] || 'عميل جديد';
-      const deviceType = parts[1] || 'هاتف';
-      const brand = parts[2] || '';
-      const issue = parts.slice(3).join(' ') || 'صيانة عامة';
-
-      return {
-        handled: true,
-        fnName: 'addTask',
-        args: { customerName, deviceType, brand, issue, cost: 0 },
-        description: getCommandDescription('addTask', { customerName })
-      };
-    }
-
-    // 8. Status update intent: e.g. "تحديث حالة المهمة 1 الى تم الفحص"
-    const statusMatch = clean.match(/(?:تحديث|تغيير|تعديل)\s+حالة\s+(?:المهمة|مهمة)?\s*(\d+)\s+(?:الى|إلى|بحالة)?\s*(.+)/);
-    if (statusMatch) {
-      const taskId = statusMatch[1];
-      const newStatus = statusMatch[2].trim();
-      return {
-        handled: true,
-        fnName: 'updateTaskStatus',
-        args: { taskId, status: newStatus },
-        description: getCommandDescription('updateTaskStatus', { taskId, status: newStatus })
-      };
-    }
-
-    // Delete task intent: e.g. "حذف المهمة 3"
-    const delMatch = clean.match(/(?:حذف|امسح|إزالة)\s+(?:المهمة|مهمة)?\s*(\d+)/);
-    if (delMatch) {
-      const taskId = delMatch[1];
-      return {
-        handled: true,
-        fnName: 'deleteTask',
-        args: { taskId },
-        description: getCommandDescription('deleteTask', { taskId })
-      };
-    }
-
-    // Update task cost intent: e.g. "تعديل تكلفة المهمة 2 إلى 15000"
-    const costMatch = clean.match(/(?:تعديل|تغيير|اجعل|تحديد)\s+تكلفة\s+(?:المهمة|مهمة)?\s*(\d+)\s+(?:الى|إلى|هي|بـ)?\s*(\d+)/);
-    if (costMatch) {
-      const taskId = costMatch[1];
-      const cost = costMatch[2];
-      return {
-        handled: true,
-        fnName: 'updateTaskCost',
-        args: { taskId, cost },
-        description: getCommandDescription('updateTaskCost', { taskId, cost })
-      };
-    }
-
-    // 9. Add customer intent: e.g. "اضافة عميل محمد برقم 771234567"
-    const custMatch = clean.match(/(?:إضافة|اضافة|أضف|اضف)\s+عميل\s+(?:جديد)?\s*([^\d]+)(?:\s+(?:برقم|رقم|هاتف)\s*(\d+))?/);
-    if (custMatch) {
-      const cName = custMatch[1].trim();
-      const cPhone = custMatch[2] || '';
-      if (cName) {
-        return {
-          handled: true,
-          fnName: 'addCustomer',
-          args: { name: cName, phone: cPhone },
-          description: getCommandDescription('addCustomer', { name: cName, phone: cPhone })
-        };
-      }
-    }
-
-    // 10. Add deposit intent: e.g. "اضافة دفعة 2000 للمهمة 3"
-    const depMatch = clean.match(/(?:إضافة|اضافة|أضف|اضف)\s+دفعة\s+(\d+)\s+(?:للمهمة|مهمة|رقم)?\s*(\d+)/);
-    if (depMatch) {
-      const amount = depMatch[1];
-      const taskId = depMatch[2];
-      return {
-        handled: true,
-        fnName: 'addDeposit',
-        args: { taskId, amount },
-        description: getCommandDescription('addDeposit', { taskId, amount })
-      };
-    }
-
-    // 11. Task details intent: e.g. "تفاصيل المهمة 5"
-    const detailMatch = clean.match(/(?:تفاصيل|معلومات|استعلام)\s+(?:المهمة|مهمة)?\s*(\d+)/);
-    if (detailMatch) {
-      const taskId = detailMatch[1];
-      return {
-        handled: true,
-        fnName: 'getTaskDetails',
-        args: { taskId },
-        description: getCommandDescription('getTaskDetails', { taskId })
-      };
-    }
-
-    return { handled: false };
-  };
 
   // Confirm pending action manually if ever needed
   const confirmAction = async () => {
@@ -1731,6 +2341,19 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
         return m;
       }));
 
+      // Synchronize with main notifications list
+      try {
+        const stored = JSON.parse(localStorage.getItem('faisali_financial_notifications') || '[]');
+        const updated = stored.map((item: any) => {
+          if (item.rawText === financialSuggestion.rawText || (item.amount === financialSuggestion.amount && item.partyName === financialSuggestion.partyName)) {
+            return { ...item, isExecuted: true, executedDetails };
+          }
+          return item;
+        });
+        localStorage.setItem('faisali_financial_notifications', JSON.stringify(updated));
+        window.dispatchEvent(new CustomEvent('financial_notifications_updated'));
+      } catch (e) {}
+
       // Broadcast changes
       window.dispatchEvent(new CustomEvent('financial_update'));
       window.dispatchEvent(new CustomEvent('cash_accounts_changed'));
@@ -1746,27 +2369,40 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
   const handleReadNotificationFromClipboard = async () => {
     try {
       setIsClipboardReading(true);
-      if (!navigator.clipboard?.readText) {
-        const text = prompt('الصق نص رسالة الإشعار البنكي هنا (مثال: أودع/محمد أو تم تحويل...):');
-        if (text && text.trim()) {
-          commitUserVoiceCommand(text.trim());
+
+      // 1. Attempt using Capacitor Clipboard plugin (Native Android / Capacitor)
+      try {
+        const { Clipboard } = await import('@capacitor/clipboard');
+        const capResult = await Clipboard.read();
+        if (capResult && capResult.value && capResult.value.trim()) {
+          toast.success('تم جلب نص الإشعار من الحافظة بنجاح');
+          commitUserVoiceCommand(capResult.value.trim());
+          return;
         }
-        return;
+      } catch (capErr) {
+        // Fallback to web browser clipboard
       }
-      const clipboardText = await navigator.clipboard.readText();
-      if (!clipboardText || !clipboardText.trim()) {
-        const text = prompt('الحافظة فارغة، يرجى كتابة أو لصق نص رسالة الإشعار:');
-        if (text && text.trim()) {
-          commitUserVoiceCommand(text.trim());
+
+      // 2. Attempt using Web Clipboard API if available and document focused
+      if (navigator.clipboard?.readText) {
+        try {
+          const clipboardText = await navigator.clipboard.readText();
+          if (clipboardText && clipboardText.trim()) {
+            toast.success('تم جلب نص الإشعار من الحافظة بنجاح');
+            commitUserVoiceCommand(clipboardText.trim());
+            return;
+          }
+        } catch (webErr) {
+          // Fallback to manual paste modal
         }
-        return;
       }
-      commitUserVoiceCommand(clipboardText.trim());
+
+      // 3. Clean fallback: Open in-app smooth paste modal (No native browser prompt dialog!)
+      setManualPasteText('');
+      setShowManualPasteModal(true);
     } catch (err) {
-      const text = prompt('تعذر الوصول للحافظة تلقائياً. الصق نص رسالة الإشعار هنا:');
-      if (text && text.trim()) {
-        commitUserVoiceCommand(text.trim());
-      }
+      setManualPasteText('');
+      setShowManualPasteModal(true);
     } finally {
       setIsClipboardReading(false);
     }
@@ -1788,17 +2424,7 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
         return;
       }
 
-      // 1. Local fast parser (Instant execution)
-      const localParsed = parseLocalCommand(text);
-      if (localParsed.handled && localParsed.fnName) {
-        const resultStr = await executeToolCall(localParsed.fnName, localParsed.args || {});
-        const desc = localParsed.description || 'تنفيذ الأمر';
-        const briefMsg = `تم ${desc}. ${resultStr}`;
-        sendAssistantReply(briefMsg);
-        return;
-      }
-
-      // 2. Try Gemini Server Endpoint
+      // 1. Process Voice Command via Gemini AI Assistant Engine (Internal App System Only)
       const apiUrl = getApiUrl('/api/assistant/chat');
       
       // Build deep context for Gemini to learn and understand current state
@@ -1894,51 +2520,142 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
 
 • الملاحظات المسجلة: ${allNotes.length} ملاحظة وتنبيه.
 
-• أقسام التطبيق المتاحة للتنقل والتحكم:
-  - tasks (المهام والصيانة)، customers (دليل العملاء)، inventory (المخزن وقطع الغيار)، accounting (الحسابات والخزائن والمركز المالي)، reports (التقارير وسندات القبض)، notes (الملاحظات)، settings (الإعدادات والنسخ الاحتياطي).
+• أقسام التطبيق المتاحة للتنقل والتحكم والوصول (عبر أداة openTab أو تنفيذ الإجراء المباشر):
+  - tasks (مهام الصيانة والأجهزة، تصفية بالبحث أو الحالة)
+  - customers (دليل العملاء، إضافة وتعديل العملاء والاتصال بهم)
+  - inventory (المستودع والمخزون وقطع الغيار، إضافة وتعديل الأصناف)
+  - accounting (الحسابات المالية، الصناديق، الخزائن، الحسابات النقدية، المركز المالي والديون)
+  - reports (التقارير وسندات القبض وكشوفات الحسابات)
+  - notes (الملاحظات السريعة والمفكرة)
+  - settings (إعدادات التطبيق، التخصيص، والنسخ الاحتياطي)
 
-تعليمات العمل للمساعد:
-أنت المساعد الذكي الخبير المسؤول عن الإجابة عن كل بيانات وتفاصيل وأقسام التطبيق. تحدث باللغة العربية باحترافية وسرعة ودقة مطلقة وأعط الأرقام والإحصائيات والأسماء بوضوح عند السؤال عنها، ويمكنك استدعاء أدوات النظام مباشرة مثل getFinancialCenterDetails أو listCashAccounts أو getDebtsSummary أو countTasks وغيرها.]
+تعليمات العمل الاحترافية للمساعد الذكي:
+1. أنت المساعد الذكي والخبير الحصري والشامل لنظام (الفيصل للصيانة). تمتلك صلاحية كاملة لتنفيذ كل الأوامر والعمليات دون حاجة المستخدم للمس الشاشة.
+2. يمكنك استدعاء الدوال بدقة:
+   - إضافة مهمة: addTask، تعديل حالة مهمة: updateTaskStatus، تعديل تكلفة أو تفاصيل مهمة: updateTaskCost أو updateTaskDetails، حذف مهمة: deleteTask، البحث عن وفتح جهاز عميل: openCustomerTask.
+   - إضافة عميل: addCustomer، تعديل عميل: updateCustomer، سرد العملاء: listCustomers.
+   - إضافة صنف للمخزون: addInventoryItem، تعديل صنف مخزون: updateInventoryItem، ملخص المخزون: getInventorySummary.
+   - إضافة حساب أو صندوق نقدي: addCashAccount، عرض الحسابات النقدية: listCashAccounts، رصيد الخزينة: getBoxBalance، المركز المالي: getFinancialCenterDetails، ديون العملاء: getDebtsSummary، ديون الموردين: listDebts.
+   - التنقل بين النوافذ والأقسام: openTab، البحث الشامل: searchQuery، إضافة ملاحظة أو تنبيه: addNote / setTaskReminder، النسخ الاحتياطي: triggerDriveBackup، والتراجع: undoAction.
+3. استجب دائماً باللغة العربية بأسلوب راقٍ، سريع، ومحكم، ونفذ الأوامر مباشرة ثم أخبر المستخدم بما تم بدقة وثقة.]
 `;
 
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          prompt: text + "\n\n" + contextString,
-          mode: voiceSettings.assistantMode || 'professional'
-        })
-      });
+      let isServerSuccess = false;
+      try {
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            prompt: text + "\n\n" + contextString,
+            mode: voiceSettings.assistantMode || 'professional'
+          })
+        });
 
-      if (response.ok) {
-        const data = await response.json();
-        if (data.functionCalls && data.functionCalls.length > 0) {
-          const call = data.functionCalls[0];
-          const desc = getCommandDescription(call.name, call.args || {});
-          const resultStr = await executeToolCall(call.name, call.args || {});
-          const briefMsg = `تم ${desc}. ${resultStr}`;
-          sendAssistantReply(briefMsg);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.functionCalls && data.functionCalls.length > 0) {
+            const results: string[] = [];
+            const isProfessional = (voiceSettings.assistantMode || 'professional') === 'professional';
+            for (const call of data.functionCalls) {
+              const desc = getCommandDescription(call.name, call.args || {});
+              const resultStr = await executeToolCall(call.name, call.args || {});
+              const isDirectAnswer = resultStr.startsWith('تم ') || resultStr.includes(':') || resultStr.includes('ريال') || resultStr.includes('أجهزة') || resultStr.includes('يوجد') || resultStr.includes('إجمالي') || resultStr.includes('رصيد') || resultStr.includes('دخل') || resultStr.includes('لديك');
+              results.push(isProfessional && isDirectAnswer ? resultStr : `تم ${desc}. ${resultStr}`);
+            }
+            const combinedMsg = results.join(' | ');
+            sendAssistantReply(combinedMsg);
+            return;
+          }
+
+          const reply = data.responseText || 'تم الفهم واستقبال الأمر.';
+          sendAssistantReply(reply);
           return;
         }
-
-        const reply = data.responseText || 'تم الفهم واستقبال الأمر.';
-        sendAssistantReply(reply);
-        return;
+      } catch (err: any) {
+        console.warn("Speech server call failed, trying direct client Gemini fallback:", err);
       }
-    } catch (err: any) {
-      console.warn("Speech server call fallback:", err);
-    }
 
-    // 3. Fallback: Re-try local parsing with broader match
-    const fuzzyParsed = parseLocalCommand(text);
-    if (fuzzyParsed.handled && fuzzyParsed.fnName) {
-      const resultStr = await executeToolCall(fuzzyParsed.fnName, fuzzyParsed.args || {});
-      const desc = fuzzyParsed.description || 'تنفيذ الأمر';
-      const briefMsg = `تم ${desc}. ${resultStr}`;
-      sendAssistantReply(briefMsg);
-    } else {
-      const fallbackReply = 'أهلاً بك! يمكنك إعطائي أوامر صريحة مثل: "اضف مهمة للعميل محمد"، "فتح المحاسبة"، "كم عدد المهام"، أو "بحث عن جالاكسي".';
-      sendAssistantReply(fallbackReply);
+      // 2.5 Direct Client Gemini Fallback (for Android APK Capacitor & offline/standalone mode)
+      const directKey = voiceSettings.geminiApiKey || (import.meta.env ? import.meta.env.VITE_GEMINI_API_KEY : '');
+      if (directKey) {
+        try {
+          const aiInstance = new GoogleGenAI({ apiKey: directKey });
+          const isProfessional = (voiceSettings.assistantMode || 'professional') === 'professional';
+          const systemPrompt = isProfessional
+            ? `أنت (مساعد الفيصل المحترف) - الخبير الصوتي والذكاء الاصطناعي لنظام "الفيصل للصيانة".
+تتميز بالقدرة الفائقة على فهم الأوامر الصوتية باللغة العربية وتنفيذها فوراً مهما كانت صياغتها، واستخراج أسماء العملاء والأرقام والمهام.
+نمطك الحالي: إجابة مباشرة وحاسمة بأقصر عبارة بدون مقدمات أو حشو وبدون تشكيل.`
+            : `أنت المساعد الذكي والخبير الشامل لتطبيق (الفيصل للصيانة). تفهم الأوامر باللغة العربية وتعتمد على بيانات النظام المحفوظة.`;
+
+          const clientTools = [{
+            functionDeclarations: [
+              { name: "searchQuery", description: "البحث في التطبيق عبر شريط البحث السريع", parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING } }, required: ["query"] } },
+              { name: "addTask", description: "أضف مهمة صيانة جديدة.", parameters: { type: Type.OBJECT, properties: { customerName: { type: Type.STRING }, deviceType: { type: Type.STRING }, brand: { type: Type.STRING }, issue: { type: Type.STRING }, cost: { type: Type.NUMBER } }, required: ["customerName", "deviceType", "issue"] } },
+              { name: "updateTaskStatus", description: "تحديث حالة مهمة صيانة موجودة.", parameters: { type: Type.OBJECT, properties: { taskId: { type: Type.NUMBER }, customerName: { type: Type.STRING }, status: { type: Type.STRING } }, required: ["status"] } },
+              { name: "deleteTask", description: "حذف مهمة صيانة نهائياً.", parameters: { type: Type.OBJECT, properties: { taskId: { type: Type.NUMBER } }, required: ["taskId"] } },
+              { name: "updateTaskCost", description: "تحديث أو تعديل التكلفة التقديرية لمهمة.", parameters: { type: Type.OBJECT, properties: { taskId: { type: Type.NUMBER }, customerName: { type: Type.STRING }, cost: { type: Type.NUMBER } }, required: ["cost"] } },
+              { name: "openCustomerTask", description: "البحث عن مهام عميل معين لفتح إحداها.", parameters: { type: Type.OBJECT, properties: { customerName: { type: Type.STRING }, choice: { type: Type.STRING } }, required: ["customerName"] } },
+              { name: "addCustomer", description: "إضافة عميل جديد.", parameters: { type: Type.OBJECT, properties: { name: { type: Type.STRING }, phone: { type: Type.STRING } }, required: ["name"] } },
+              { name: "addDeposit", description: "إضافة دفعة حساب أو مبلغ مقدم لمهمة صيانة أو لعميل معين.", parameters: { type: Type.OBJECT, properties: { taskId: { type: Type.NUMBER }, customerName: { type: Type.STRING }, amount: { type: Type.NUMBER }, isLastTask: { type: Type.BOOLEAN } }, required: ["amount"] } },
+              { name: "openTab", description: "الانتقال إلى قسم أو شاشة محددة في التطبيق.", parameters: { type: Type.OBJECT, properties: { tabId: { type: Type.STRING }, filterQuery: { type: Type.STRING } }, required: ["tabId"] } },
+              { name: "countTasks", description: "معرفة عدد المهام الكلية، المعلقة وقيد التنفيذ.", parameters: { type: Type.OBJECT, properties: {} } },
+              { name: "getFinancialSummary", description: "معرفة ملخص مالي للحسابات وإيرادات ومصروفات اليوم.", parameters: { type: Type.OBJECT, properties: {} } },
+              { name: "getReadyTasksSummary", description: "معرفة واستخراج الأجهزة والمهام الجاهزة للتسليم حالياً.", parameters: { type: Type.OBJECT, properties: {} } },
+              { name: "getDailySummary", description: "استخراج ملخص وتقرير أعمال اليوم الشاملة.", parameters: { type: Type.OBJECT, properties: {} } },
+              { name: "getBoxBalance", description: "معرفة رصيد الخزينة والصندوق المتاح حالياً بالريال اليمني.", parameters: { type: Type.OBJECT, properties: {} } },
+              { name: "getDebtsSummary", description: "معرفة إجمالي ديون ومستحقات العملاء المتبقية.", parameters: { type: Type.OBJECT, properties: {} } },
+              { name: "getFinancialCenterDetails", description: "معرفة تفاصيل ومؤشرات المركز المالي، إجمالي الأصول والرصيد.", parameters: { type: Type.OBJECT, properties: {} } },
+              { name: "listCashAccounts", description: "عرض كافة الحسابات النقدية والخزائن والصناديق.", parameters: { type: Type.OBJECT, properties: {} } },
+              { name: "listDebts", description: "عرض الديون والالتزامات القائمة للموردين.", parameters: { type: Type.OBJECT, properties: {} } },
+              { name: "getInventorySummary", description: "معرفة إحصائيات قطع الغيار والمخزون.", parameters: { type: Type.OBJECT, properties: {} } },
+              { name: "updateCustomerTaskStatus", description: "تحديث وتغيير حالة مهمة العميل مباشرة باسم العميل.", parameters: { type: Type.OBJECT, properties: { customerName: { type: Type.STRING }, status: { type: Type.STRING } }, required: ["customerName", "status"] } },
+              { name: "openWindow", description: "فتح أو إغلاق أي نافذة أو نموذج بالصوت.", parameters: { type: Type.OBJECT, properties: { windowName: { type: Type.STRING } }, required: ["windowName"] } }
+            ]
+          }];
+
+          const geminiRes = await aiInstance.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: text + "\n\n" + contextString,
+            config: {
+              systemInstruction: systemPrompt,
+              tools: clientTools
+            }
+          });
+
+          if (geminiRes.functionCalls && geminiRes.functionCalls.length > 0) {
+            const results: string[] = [];
+            const isProfessional = (voiceSettings.assistantMode || 'professional') === 'professional';
+            for (const call of geminiRes.functionCalls) {
+              const desc = getCommandDescription(call.name, call.args || {});
+              const resultStr = await executeToolCall(call.name, call.args || {});
+              const isDirectAnswer = resultStr.startsWith('تم ') || resultStr.includes(':') || resultStr.includes('ريال') || resultStr.includes('أجهزة') || resultStr.includes('يوجد') || resultStr.includes('إجمالي') || resultStr.includes('رصيد') || resultStr.includes('دخل') || resultStr.includes('لديك');
+              results.push(isProfessional && isDirectAnswer ? resultStr : `تم ${desc}. ${resultStr}`);
+            }
+            sendAssistantReply(results.join(' | '));
+            return;
+          }
+
+          if (geminiRes.text) {
+            sendAssistantReply(geminiRes.text);
+            return;
+          }
+        } catch (directErr) {
+          console.warn("Direct client Gemini call error:", directErr);
+        }
+      }
+
+      // If neither server nor direct client Gemini succeeded
+      const hasApiKey = Boolean(voiceSettings.geminiApiKey || (import.meta.env ? import.meta.env.VITE_GEMINI_API_KEY : ''));
+      if (!hasApiKey) {
+        sendAssistantReply('يرجى إدخال مفتاح Gemini API في إعدادات المساعد لتمكينه من المعالجة الذكية السريعة لكافة الأوامر وتنفيذ وتعديل العمليات بدقة.');
+      } else {
+        sendAssistantReply('تعذر الاتصال بمحرك الذكاء الاصطناعي (Gemini)، يرجى التحقق من اتصال الإنترنت أو التأكد من صلاحية مفتاح API.');
+      }
+    } catch (procErr) {
+      console.error("Process speech error:", procErr);
+      sendAssistantReply("عذراً، حدث خطأ أثناء تنفيذ الأمر.");
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -1972,7 +2689,7 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
 
       recognition.onstart = () => {
         setIsListening(true);
-        setAssistantMessage('جاري الاستماع...');
+        setAssistantMessage('تفضل بالتحدث 🎙️');
       };
 
       recognition.onresult = (event: any) => {
@@ -2004,7 +2721,7 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
 
       recognition.start();
     } catch (err) {
-      console.error("Failed to start recognition:", err);
+      console.warn("Failed to start recognition:", err);
       setIsListening(false);
       setAssistantMessage('حدث خطأ في بدء الميكروفون.');
     }
@@ -2012,8 +2729,19 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
 
   // Unified Speech Recognition for Assistant
   const restartListening = async () => {
-    if (!isActiveRef.current) return;
-    if (isSpeakingRef.current) return;
+    setIsActive(true);
+    isActiveRef.current = true;
+
+    if (isSpeakingRef.current) {
+      try {
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+        if (activeAudioRef.current) {
+          activeAudioRef.current.pause();
+          activeAudioRef.current = null;
+        }
+      } catch (e) {}
+      setIsSpeaking(false);
+    }
 
     setIsListening(true);
     setLiveInterimText('');
@@ -2022,13 +2750,14 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
     }
-    setAssistantMessage('جاري الاستماع لصوتك عبر الميكروفون... تفضل بنطق أوامرك 🎙️');
+    setAssistantMessage('تفضل بنطق أوامرك عبر الميكروفون 🎙️');
 
     try {
       await startUnifiedSpeechRecognition({
         target: 'assistant',
+        provider: 'auto',
         language: 'ar-SA',
-        prompt: 'مساعد الفيصلي يستمع لك الآن... تفضل بالتحدث بأمرك',
+        prompt: 'المساعد الصوتي يستمع لك الآن عبر الأوامر الافتراضية... تفضل بنطق أوامرك',
         interimResults: true,
         continuous: true,
         onStart: () => {
@@ -2040,6 +2769,7 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
           const clean = partialText.trim();
           if (!clean) return;
           setLiveInterimText(clean);
+          setTextInput(clean);
           currentSpokenBufferRef.current = clean;
 
           // Silence detection timer: 1200ms of silence commits the text directly to chat
@@ -2061,6 +2791,7 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
           }
           const clean = finalTranscript.trim() || currentSpokenBufferRef.current.trim();
           if (clean) {
+            setTextInput(clean);
             commitUserVoiceCommand(clean);
           }
         },
@@ -2136,11 +2867,7 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
               } catch (e) {}
             }
 
-            if (isActiveRef.current && !isSpeakingRef.current && !isProcessingRef.current) {
-              setTimeout(() => {
-                restartListening();
-              }, 250);
-            }
+            setIsListening(false);
             return;
           }
 
@@ -2214,31 +2941,20 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
     setLiveInterimText('');
     setIsListening(false);
     setIsActive(false);
+    setIsDirectChatOnly(false);
     setPendingAction(null);
     setTranscript('');
 
     stopUnifiedSpeechRecognition();
 
-    try {
-      if (activeAudioRef.current) {
-        activeAudioRef.current.pause();
-        activeAudioRef.current.currentTime = 0;
-        activeAudioRef.current = null;
-      }
-    } catch (e) {}
-
-    try {
-      const { Capacitor } = await import('@capacitor/core');
-      if (Capacitor.isNativePlatform()) {
-        try { await (await import('@capacitor-community/text-to-speech')).TextToSpeech.stop(); } catch (e) {}
-      }
-    } catch (e) {}
+    // إيقاف تحويل النص إلى كلام (TTS) عند الخروج وفقاً لإعدادات المساعد الصوتي
+    const currentVoiceSettings = getVoiceSettings();
+    if (currentVoiceSettings.stopVoiceOnExit !== false) {
+      await stopOngoingSpeech();
+    }
 
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (e) {}
-    }
-    if ('speechSynthesis' in window) {
-      try { window.speechSynthesis.cancel(); } catch (e) {}
     }
 
     try {
@@ -2248,6 +2964,8 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
   };
 
   const toggleVoice = () => {
+    // إيقاف أي نطق صوتي فوري عند النقر
+    stopOngoingSpeech();
     if (isActive) {
       stopAssistant();
     } else {
@@ -2289,42 +3007,43 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
       {/* Visual glowing aura rings on the icon itself when active */}
       {isActive && (
         <>
-          <span className="absolute -inset-2 rounded-full bg-sky-400/30 animate-ping pointer-events-none z-0"></span>
-          <span className="absolute -inset-1 rounded-full bg-emerald-400/40 animate-pulse pointer-events-none z-0"></span>
+          <span className={cn("absolute -inset-2 rounded-full animate-ping pointer-events-none z-0", getEffectColorClass().auraPing)}></span>
+          <span className={cn("absolute -inset-1 rounded-full animate-pulse pointer-events-none z-0", getEffectColorClass().auraPing)}></span>
         </>
       )}
 
-      {/* Main Assistant Button */}
-      <button
-        type="button"
-        onClick={handleClick}
-        style={{ touchAction: 'manipulation' }}
-        className={cn(
-          className || "p-3 rounded-full transition-all shadow-xl flex items-center justify-center relative cursor-pointer z-10",
-          isActive
-            ? "bg-gradient-to-tr from-blue-500 via-purple-500 to-pink-500 text-white ring-4 ring-purple-300/80 shadow-purple-500/50 scale-110 border-2 border-purple-200"
-            : "bg-gradient-to-tr from-blue-500 via-purple-500 to-pink-500 text-white border-2 border-white/80 hover:scale-105 active:scale-95 shadow-lg shadow-purple-500/30"
-        )}
-        title={isActive ? "المساعد الرئيسي نشط... انقر للإيقاف" : "تفعيل المساعد الرئيسي الذكي"}
-      >
-        {isProcessing ? (
-          <Loader2 className="w-6 h-6 animate-spin text-white" />
-        ) : isListening ? (
-          <div className="relative flex items-center justify-center">
-            <Mic className="w-6 h-6 text-sky-200 animate-bounce" />
-            <span className="absolute -top-1 -right-1 w-3 h-3 bg-amber-300 rounded-full animate-ping"></span>
-          </div>
-        ) : isActive ? (
-          <div className="relative flex items-center justify-center">
-            <Sparkles className="w-6 h-6 text-amber-300 animate-spin" style={{ animationDuration: '4s' }} />
-          </div>
-        ) : (
-          <div className="relative flex items-center justify-center">
-            <GeminiIcon className="w-6 h-6 text-white transition-transform duration-500 hover:rotate-12" />
-            <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-300 rounded-full animate-ping"></span>
-          </div>
-        )}
-      </button>
+      {/* Main or Local Assistant Dock Button */}
+      {!hideMainButton && (
+        <button
+          id="main-assistant-btn"
+          type="button"
+          onClick={handleClick}
+          style={{ touchAction: 'manipulation' }}
+          className={cn(
+            className || "p-3 rounded-full transition-all shadow-xl flex items-center justify-center relative cursor-pointer z-10",
+            isActive ? getEffectColorClass().btnActive : getEffectColorClass().btnNormal
+          )}
+          title={isActive ? "المساعد الذكي نشط... انقر للإيقاف" : "تفعيل المساعد الصوتي والذكاء الاصطناعي"}
+        >
+          {isProcessing ? (
+            <Loader2 className="w-6 h-6 animate-spin text-white" />
+          ) : isListening ? (
+            <div className="relative flex items-center justify-center">
+              <Mic className="w-6 h-6 text-white animate-bounce" />
+              <span className="absolute -top-1 -right-1 w-3 h-3 bg-white rounded-full animate-ping"></span>
+            </div>
+          ) : isActive ? (
+            <div className="relative flex items-center justify-center">
+              <Sparkles className="w-6 h-6 text-emerald-800 animate-spin" style={{ animationDuration: '4s', backgroundColor: '#adffbc' }} />
+            </div>
+          ) : (
+            <div className="relative flex items-center justify-center">
+              <GeminiIcon className="w-6 h-6 text-emerald-800 transition-transform duration-500 hover:rotate-12" style={{ backgroundColor: '#adffbc' }} />
+              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping"></span>
+            </div>
+          )}
+        </button>
+      )}
 
       {/* Mobile-Responsive Floating Assistant Chat Drawer - تغطي ثلثي واجهة التطبيق بالكامل من اليمين لليسار */}
       {isActive && typeof document !== 'undefined' && createPortal(
@@ -2339,8 +3058,16 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
           />
           <div 
             dir="rtl"
+            style={{
+              left: 0,
+              right: 0,
+              width: '100%',
+              maxWidth: '100%',
+              margin: 0,
+              boxSizing: 'border-box'
+            }}
             className={cn(
-              "fixed inset-x-0 bottom-0 z-[9999] w-full left-0 right-0 h-[67dvh] max-h-[68dvh] rounded-t-[28px] sm:rounded-t-[32px] p-3.5 sm:p-4 text-right select-none shadow-2xl flex flex-col overflow-hidden transition-all duration-300 animate-in slide-in-from-bottom border-t-2 border-slate-300/80 dark:border-slate-700/80 pb-[max(1.25rem,env(safe-area-inset-bottom,20px))]",
+              "fixed inset-x-0 bottom-0 z-[9999] w-full left-0 right-0 m-0 max-w-full h-[66.67dvh] max-h-[66.67dvh] rounded-t-[24px] sm:rounded-t-[28px] p-3 sm:p-4 text-right select-none shadow-2xl flex flex-col overflow-hidden transition-all duration-300 animate-in slide-in-from-bottom border-t-2 border-slate-300/80 dark:border-slate-700/80 pb-[max(1.25rem,env(safe-area-inset-bottom,20px))]",
               getBgStyleClass(),
               getTextColorClass()
             )}
@@ -2356,54 +3083,112 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
             </div>
 
             {/* Header */}
-          <div className="flex items-center justify-between gap-2 border-b border-slate-200/40 pb-2.5 mb-2 shrink-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className={cn(
-                "w-8 h-8 rounded-xl flex items-center justify-center text-white shadow-xs shrink-0 border border-white/30 relative",
-                isListening ? "bg-sky-500 animate-pulse ring-2 ring-sky-300" : getEffectColorClass().iconBg
-              )}>
-                {isListening ? <Mic className="w-4 h-4" /> : <GeminiIcon className="w-4 h-4" />}
-                {isListening && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping" />}
-              </div>
-              <div className="flex flex-col min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className={cn("text-xs sm:text-sm font-black tracking-wide truncate", getEffectColorClass().titleColor)}>
-                    مساعد الفيصلي
-                  </span>
-                  <span className={cn(
-                    "text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 rounded-full font-extrabold shrink-0 border",
-                    isListening 
-                      ? "bg-sky-500/20 text-sky-700 dark:text-sky-300 border-sky-500/40 animate-pulse" 
-                      : "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
-                  )}>
-                    {isListening ? '🎙️ يستمع' : 'جاهز'}
+            <div className="flex items-center justify-between gap-2 border-b border-slate-200/40 pb-2.5 mb-2 shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className={cn(
+                  "w-8 h-8 rounded-xl flex items-center justify-center text-white shadow-xs shrink-0 border border-white/30 relative",
+                  isListening ? "bg-sky-500 animate-pulse ring-2 ring-sky-300" : getEffectColorClass().iconBg
+                )}>
+                  {isListening ? (
+                    <Mic className="w-4 h-4" />
+                  ) : (
+                    <GeminiIcon className="w-4 h-4" />
+                  )}
+                  {isListening && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping" />}
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className={cn("text-xs sm:text-sm font-black tracking-wide truncate", getEffectColorClass().titleColor)}>
+                      {isDirectChatOnly ? 'مساعد الفيصلي (دردشة مباشرة)' : 'مساعد الفيصلي الذكي'}
+                    </span>
+                    <span className={cn(
+                      "text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 rounded-full font-extrabold shrink-0 border",
+                      isListening 
+                        ? "bg-sky-500/20 text-sky-700 dark:text-sky-300 border-sky-500/40 animate-pulse" 
+                        : "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+                    )}>
+                      {isListening ? '🎙️ يستمع' : 'جاهز'}
+                    </span>
+                  </div>
+                  <span className="text-[9px] sm:text-[10px] text-slate-500 dark:text-slate-400 font-medium truncate">
+                    الأوامر الصوتية الافتراضية للهاتف
                   </span>
                 </div>
-                <span className="text-[9px] sm:text-[10px] text-slate-500 dark:text-slate-400 font-medium truncate">
-                  نظام أندرويد و Gemini
-                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0 relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isSpeaking) {
+                      stopOngoingSpeech();
+                    } else {
+                      const newMute = !voiceSettings.muteNotificationVoiceSpeech;
+                      saveVoiceSettings({ ...voiceSettings, muteNotificationVoiceSpeech: newMute });
+                      setVoiceSettings(prev => ({ ...prev, muteNotificationVoiceSpeech: newMute }));
+                      if (newMute) stopOngoingSpeech();
+                    }
+                  }}
+                  className={cn(
+                    "p-1.5 sm:p-2 rounded-xl transition-all cursor-pointer border text-xs flex items-center justify-center shrink-0 active:scale-95 shadow-xs",
+                    (voiceSettings.muteNotificationVoiceSpeech)
+                      ? "bg-rose-500 hover:bg-rose-600 text-white border-rose-600 shadow-rose-500/20"
+                      : "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 shadow-emerald-600/20"
+                  )}
+                  title={voiceSettings.muteNotificationVoiceSpeech ? "الصوت مكتوم - انقر للتفعيل" : "الصوت مفعل - انقر للإسكات"}
+                >
+                  {voiceSettings.muteNotificationVoiceSpeech ? (
+                    <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
+                  ) : (
+                    <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsChatHistoryModalOpen(true)}
+                  className="p-1.5 sm:p-2 opacity-85 hover:opacity-100 hover:bg-slate-500/20 rounded-xl transition-colors cursor-pointer border border-slate-400/30 text-xs text-indigo-600 dark:text-indigo-400"
+                  title="سجل المحادثات والأوامر"
+                >
+                  <History className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsOpen(true)}
+                  className="p-1.5 sm:p-2 opacity-85 hover:opacity-100 hover:bg-slate-500/20 rounded-xl transition-colors cursor-pointer border border-slate-400/30 text-xs"
+                  title="إعدادات المساعد الصوتي"
+                >
+                  <Settings className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); stopAssistant(); }}
+                  className="p-1.5 sm:p-2 opacity-85 hover:opacity-100 hover:bg-rose-500/20 text-rose-500 rounded-xl transition-colors cursor-pointer border border-rose-400/30 text-xs"
+                  title="إغلاق المساعد الصوتي"
+                >
+                  <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                </button>
               </div>
             </div>
 
-            <div className="flex items-center gap-1 shrink-0 relative">
-              <button
-                type="button"
-                onClick={() => setIsSettingsOpen(true)}
-                className="p-1.5 sm:p-2 opacity-85 hover:opacity-100 hover:bg-slate-500/20 rounded-xl transition-colors cursor-pointer border border-slate-400/30 text-xs"
-                title="إعدادات المساعد الصوتي"
-              >
-                <Settings className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); stopAssistant(); }}
-                className="p-1.5 sm:p-2 opacity-85 hover:opacity-100 hover:bg-rose-500/20 text-rose-500 rounded-xl transition-colors cursor-pointer border border-rose-400/30 text-xs"
-                title="إغلاق المساعد الصوتي"
-              >
-                <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              </button>
-            </div>
-          </div>
+            {/* Interactive Speech Mute/Stop Control Banner */}
+            {isSpeaking && (
+              <div className="bg-emerald-500/15 border border-emerald-500/40 rounded-xl px-3 py-1.5 mb-2 flex items-center justify-between gap-2 shrink-0 animate-in fade-in duration-200">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="p-1 bg-emerald-600 text-white rounded-lg animate-bounce shrink-0">
+                    <Volume2 className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="truncate text-[11px] font-bold text-emerald-900 dark:text-emerald-200">جارِ القراءة والنطق بالصوت...</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => stopOngoingSpeech()}
+                  className="p-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-lg shrink-0 shadow-xs transition-all active:scale-95 flex items-center justify-center border border-rose-600"
+                  title="إسكات الصوت فوراً"
+                >
+                  <VolumeX className="w-3.5 h-3.5 text-white" />
+                </button>
+              </div>
+            )}
 
           {/* Chat Messages Body - Generously sized for 2/3 screen */}
           <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 my-1 text-right">
@@ -2438,26 +3223,57 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
             {chatMessages.map((msg) => (
               <div key={msg.id} className="space-y-1">
                 {msg.role === 'user' ? (
-                  <div className="flex items-start justify-end gap-1.5 pl-6">
-                    <div className="bg-sky-600 text-white rounded-2xl rounded-tr-xs p-2.5 text-xs sm:text-sm font-bold leading-relaxed shadow-sm max-w-[90%]">
+                  <div className="flex items-start justify-end gap-1.5 pl-2 sm:pl-4">
+                    <div 
+                      className="bg-sky-600 text-white rounded-2xl rounded-tr-xs p-2.5 text-xs sm:text-sm font-bold leading-relaxed shadow-sm max-w-[96%] relative cursor-pointer select-text"
+                      onTouchStart={() => handleTouchStartMessage(msg)}
+                      onTouchEnd={handleTouchEndMessage}
+                      onTouchMove={handleTouchEndMessage}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setSelectedMessageForAction(msg);
+                      }}
+                    >
                       <div className="flex items-center justify-between gap-2 mb-0.5 text-[10px] text-sky-200 border-b border-sky-500/50 pb-0.5">
                         <span className="font-black flex items-center gap-1">
                           <Mic className="w-2.5 h-2.5 text-sky-200" />
                           أمرك الصوتي
                         </span>
-                        <span className="text-[9px] opacity-80">
-                          {msg.timestamp.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedMessageForAction(msg);
+                            }}
+                            className="p-0.5 hover:bg-white/20 rounded text-sky-100 transition-colors"
+                            title="خيارات الرسالة (نسخ، مشاركة، حذف)"
+                          >
+                            <Sparkles className="w-3 h-3 text-amber-300" />
+                          </button>
+                          <span className="text-[9px] opacity-80">
+                            {msg.timestamp.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
                       </div>
                       <div className="text-right whitespace-pre-wrap">{msg.text}</div>
                     </div>
                   </div>
                 ) : (
-                  <div className="flex items-start justify-start gap-1.5 pr-6">
-                    <div className={cn(
-                      "rounded-2xl rounded-tl-xs p-2.5 text-xs sm:text-sm font-bold leading-relaxed shadow-sm max-w-[92%] border border-emerald-500/30",
-                      getEffectColorClass().msgBg
-                    )}>
+                  <div className="flex items-start justify-start gap-1.5 pr-2 sm:pr-4">
+                    <div 
+                      className={cn(
+                        "rounded-2xl rounded-tl-xs p-2.5 text-xs sm:text-sm font-bold leading-relaxed shadow-sm max-w-[96%] border border-emerald-500/30 relative cursor-pointer select-text",
+                        getEffectColorClass().msgBg
+                      )}
+                      onTouchStart={() => handleTouchStartMessage(msg)}
+                      onTouchEnd={handleTouchEndMessage}
+                      onTouchMove={handleTouchEndMessage}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setSelectedMessageForAction(msg);
+                      }}
+                    >
                       <div className="flex items-center justify-between gap-2 mb-1 border-b border-emerald-400/30 pb-0.5">
                         <div className="flex items-center gap-1 text-[10px] font-black text-emerald-800 dark:text-emerald-300">
                           <div className={cn("p-0.5 rounded-full", getEffectColorClass().msgIconBg)}>
@@ -2465,15 +3281,42 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
                           </div>
                           <span>مساعد الفيصلي</span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => speakArabic(msg.text)}
-                          className="flex items-center gap-0.5 text-[10px] text-emerald-700 dark:text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 px-1.5 py-0.5 rounded cursor-pointer active:scale-90 transition-all"
-                          title="نطق هذا الرد بالصوت مجدداً"
-                        >
-                          <Volume2 className="w-3 h-3" />
-                          <span>نطق</span>
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedMessageForAction(msg);
+                            }}
+                            className="p-1 hover:bg-emerald-500/20 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300"
+                            title="خيارات الرسالة (نسخ، مشاركة، حذف)"
+                          >
+                            <Sparkles className="w-3 h-3 text-amber-400" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isSpeaking) {
+                                stopOngoingSpeech();
+                              } else {
+                                speakArabic(msg.text);
+                              }
+                            }}
+                            className={cn(
+                              "p-1.5 rounded-lg cursor-pointer active:scale-90 transition-all border shrink-0 flex items-center justify-center shadow-2xs",
+                              isSpeaking
+                                ? "bg-rose-500 hover:bg-rose-600 text-white border-rose-600 shadow-rose-500/30 animate-pulse"
+                                : "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 shadow-emerald-600/20"
+                            )}
+                            title={isSpeaking ? "إسكات وإيقاف الصوت" : "نطق الرد بالصوت"}
+                          >
+                            {isSpeaking ? (
+                              <VolumeX className="w-3.5 h-3.5 text-white shrink-0" />
+                            ) : (
+                              <Volume2 className="w-3.5 h-3.5 text-white shrink-0" />
+                            )}
+                          </button>
+                        </div>
                       </div>
                       <div className="text-right leading-relaxed whitespace-pre-wrap">{msg.text}</div>
 
@@ -2596,8 +3439,8 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
 
             {/* Live interim spoken voice buffer before silence commit */}
             {liveInterimText && (
-              <div className="flex items-start justify-end gap-1.5 pl-6 animate-pulse">
-                <div className="bg-sky-500/20 border border-sky-400/60 rounded-2xl rounded-tr-xs p-2 text-xs text-sky-950 dark:text-sky-200 font-bold max-w-[90%] flex items-center gap-2">
+              <div className="flex items-start justify-end gap-1.5 pl-2 sm:pl-4 animate-pulse">
+                <div className="bg-sky-500/20 border border-sky-400/60 rounded-2xl rounded-tr-xs p-2 text-xs text-sky-950 dark:text-sky-200 font-bold max-w-[96%] flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-sky-500 animate-ping shrink-0" />
                   <span className="italic truncate">{liveInterimText}</span>
                 </div>
@@ -2679,7 +3522,10 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
                   ]);
                   handleProcessSpeech(cleanPrompt);
                 }}
-                className="px-3 py-1.5 bg-slate-200/80 dark:bg-slate-800/90 hover:bg-emerald-600 hover:text-white border border-slate-300/40 dark:border-slate-700/60 rounded-xl whitespace-nowrap transition-all cursor-pointer shrink-0 shadow-2xs active:scale-95 flex items-center gap-1"
+                className={cn(
+                  "px-3 py-1.5 bg-white/90 dark:bg-slate-800/90 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-xl whitespace-nowrap transition-all cursor-pointer shrink-0 shadow-2xs active:scale-95 flex items-center gap-1 font-bold text-xs",
+                  getEffectColorClass().chipHover
+                )}
               >
                 {prompt}
               </button>
@@ -2705,47 +3551,354 @@ ${notif.sourceEntity ? `• الجهة: ${notif.sourceEntity}\n` : ''}${notif.re
                 if (e.key === 'Enter') handleSendText();
               }}
               placeholder="اكتب أمرك، أو الصق إشعاراً بنكياً..."
-              className="flex-1 bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs sm:text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+              className={cn(
+                "flex-1 bg-white dark:bg-slate-800 border text-slate-900 dark:text-white rounded-xl px-3 py-2 text-xs sm:text-sm font-bold outline-none transition-all",
+                isListening ? "border-rose-400 ring-2 ring-rose-200 dark:ring-rose-900/40" : "border-slate-300 dark:border-slate-700 focus:ring-2 focus:ring-emerald-500"
+              )}
             />
             <button
               type="button"
               onClick={handleSendText}
               disabled={!textInput.trim() || isProcessing}
-              className="p-2 bg-white hover:bg-slate-100 text-slate-800 border border-slate-200 disabled:opacity-40 rounded-xl shadow-sm cursor-pointer transition-all active:scale-95 shrink-0"
+              className="p-2 bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-500 disabled:opacity-40 rounded-xl shadow-xs cursor-pointer transition-all active:scale-95 shrink-0"
               title="إرسال الأمر"
             >
-              <Send className="w-4 h-4 text-slate-800" />
+              <Send className="w-4 h-4 text-white" />
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (isListening) {
-                  stopUnifiedSpeechRecognition();
-                  setIsListening(false);
-                  setAssistantMessage('تم إيقاف الاستماع. انقر للبدء أو اكتب أمرك.');
-                } else {
-                  restartListening();
-                }
-              }}
-              style={{ touchAction: 'manipulation' }}
-              className={cn(
-                "p-2 rounded-xl shadow-sm cursor-pointer transition-all active:scale-95 shrink-0 border",
-                isListening ? "bg-rose-500 animate-pulse text-white border-rose-600" : "bg-yellow-400 hover:bg-yellow-500 text-slate-900 border-yellow-500"
-              )}
-              title={isListening ? "إيقاف الاستماع الصوتي" : "بدء الاستماع الصوتي"}
-            >
-              {isListening ? <MicOff className="w-4 h-4 text-white" /> : <Mic className="w-4 h-4 text-slate-900" />}
-            </button>
+            <div className="relative shrink-0 flex items-center">
+              <button
+                type="button"
+                onClick={() => {
+                  // إيقاف تحويل النص إلى كلام فوراً عند النقر على الميكروفون
+                  stopOngoingSpeech();
+
+                  if (isListening) {
+                    stopUnifiedSpeechRecognition();
+                    setIsListening(false);
+                    setAssistantMessage('تم إيقاف الاستماع. انقر للبدء أو اكتب أمرك.');
+                  } else {
+                    restartListening();
+                  }
+                }}
+                style={{ touchAction: 'manipulation' }}
+                className={cn(
+                  "p-2 rounded-xl shadow-sm cursor-pointer transition-all active:scale-95 shrink-0 border relative",
+                  isListening ? "bg-rose-500 animate-pulse text-white border-rose-600 ring-2 ring-rose-300 shadow-md shadow-rose-500/30" : "bg-yellow-400 hover:bg-yellow-500 text-slate-900 border-yellow-500"
+                )}
+                title={isListening ? "إيقاف الاستماع" : "بدء الاستماع الصوتي"}
+              >
+                {isListening && (
+                  <>
+                    <span className="absolute -inset-1 rounded-xl bg-rose-500/35 animate-ping pointer-events-none" />
+                    <span className="absolute -inset-2 rounded-xl bg-rose-500/20 animate-pulse pointer-events-none" />
+                  </>
+                )}
+                {isListening ? <MicOff className="w-4 h-4 text-white relative z-10" /> : <Mic className="w-4 h-4 text-slate-900" />}
+              </button>
+            </div>
           </div>
+
+          {/* أيقونة وزر مصغر أسفل نافذة الدردشة للانتقال للتطبيق الكامل */}
+          {voiceSettings.showAppTransitionIcon && (
+            <div className="pt-2 pb-0.5 flex items-center justify-center shrink-0 border-t border-slate-200/40 dark:border-slate-800/40 mt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  stopAssistant();
+                  setIsDirectChatOnly(false);
+                  setIsMainScreenExited(false);
+                  if (onClose) onClose();
+                  try {
+                    window.dispatchEvent(new CustomEvent('focus_main_app'));
+                  } catch (e) {}
+                }}
+                className="flex items-center gap-2 px-4 py-1.5 bg-emerald-50 hover:bg-emerald-600 hover:text-white dark:bg-emerald-950/60 dark:hover:bg-emerald-600 dark:hover:text-white text-emerald-800 dark:text-emerald-200 text-xs font-black rounded-full transition-all cursor-pointer shadow-xs border-2 border-emerald-400/80 dark:border-emerald-600 active:scale-95 group"
+                title="الانتقال إلى واجهة التطبيق الرئيسية الكاملة"
+              >
+                <div className="p-0.5 rounded-full bg-emerald-500/20 text-emerald-700 group-hover:bg-white/20 group-hover:text-white transition-colors">
+                  <LayoutDashboard className="w-3.5 h-3.5" />
+                </div>
+                <span>الانتقال للتطبيق الكامل</span>
+                <ExternalLink className="w-3 h-3 opacity-60 group-hover:opacity-100 transition-opacity" />
+              </button>
+            </div>
+          )}
         </div>
         </>,
         document.body
+      )}
+
+      {/* أيقونة المساعد العائمة على الشاشة للشاشة الرئيسية والخلفية - لا تظهر إلا بعد الخروج من شاشة التطبيق الرئيسية وبنفس حجم أيقونة المساعد الرئيسية */}
+      {voiceSettings.floatingAssistantOnExit && isMainScreenExited && !isActive && typeof document !== 'undefined' && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            left: `${bubblePos.x}px`,
+            top: `${bubblePos.y}px`,
+            zIndex: 9990,
+            touchAction: 'none'
+          }}
+          className="select-none animate-in fade-in zoom-in-90 duration-200"
+        >
+          <div className="relative group">
+            <button
+              id="floating-assistant-btn"
+              type="button"
+              onTouchStart={(e) => {
+                const touch = e.touches[0];
+                isDraggingRef.current = true;
+                hasMovedRef.current = false;
+                dragStartPosRef.current = {
+                  x: touch.clientX,
+                  y: touch.clientY,
+                  bubbleX: bubblePos.x,
+                  bubbleY: bubblePos.y
+                };
+              }}
+              onTouchMove={(e) => {
+                if (!isDraggingRef.current) return;
+                const touch = e.touches[0];
+                const dx = touch.clientX - dragStartPosRef.current.x;
+                const dy = touch.clientY - dragStartPosRef.current.y;
+                if (Math.hypot(dx, dy) > 8) {
+                  hasMovedRef.current = true;
+                }
+                const screenW = window.innerWidth || 412;
+                const screenH = window.innerHeight || 915;
+                const newX = Math.min(Math.max(6, dragStartPosRef.current.bubbleX + dx), screenW - 62);
+                const newY = Math.min(Math.max(50, dragStartPosRef.current.bubbleY + dy), screenH - 75);
+                setBubblePos({ x: newX, y: newY });
+              }}
+              onTouchEnd={() => {
+                isDraggingRef.current = false;
+                if (!hasMovedRef.current) {
+                  // التفاعل بأول نقرة وفتح نافذة الدردشة فوراً!
+                  try {
+                    if (navigator.vibrate) navigator.vibrate(35);
+                  } catch (err) {}
+                  setIsActive(true);
+                  setIsDirectChatOnly(true);
+                  restartListening();
+                } else {
+                  // أيقونة عائمة حرة تستقر بمرونة على أطراف الشاشة (Edge docking)
+                  if (typeof window !== 'undefined') {
+                    const screenW = window.innerWidth || 412;
+                    const screenH = window.innerHeight || 915;
+                    const midX = screenW / 2;
+                    const snapLeft = 8;
+                    const snapRight = Math.max(8, screenW - 64);
+                    const finalX = bubblePos.x < midX ? snapLeft : snapRight;
+                    const finalY = Math.min(Math.max(55, bubblePos.y), screenH - 85);
+                    setBubblePos({ x: finalX, y: finalY });
+                    try {
+                      localStorage.setItem('faisali_floating_pos_main', JSON.stringify({ x: finalX, y: finalY }));
+                    } catch (e) {}
+                  }
+                }
+              }}
+              onMouseDown={(e) => {
+                isDraggingRef.current = true;
+                hasMovedRef.current = false;
+                dragStartPosRef.current = {
+                  x: e.clientX,
+                  y: e.clientY,
+                  bubbleX: bubblePos.x,
+                  bubbleY: bubblePos.y
+                };
+                const handleMouseMove = (moveEvent: MouseEvent) => {
+                  if (!isDraggingRef.current) return;
+                  const dx = moveEvent.clientX - dragStartPosRef.current.x;
+                  const dy = moveEvent.clientY - dragStartPosRef.current.y;
+                  if (Math.hypot(dx, dy) > 8) {
+                    hasMovedRef.current = true;
+                  }
+                  const screenW = window.innerWidth || 412;
+                  const screenH = window.innerHeight || 915;
+                  const newX = Math.min(Math.max(6, dragStartPosRef.current.bubbleX + dx), screenW - 62);
+                  const newY = Math.min(Math.max(50, dragStartPosRef.current.bubbleY + dy), screenH - 75);
+                  setBubblePos({ x: newX, y: newY });
+                };
+                const handleMouseUp = () => {
+                  isDraggingRef.current = false;
+                  window.removeEventListener('mousemove', handleMouseMove);
+                  window.removeEventListener('mouseup', handleMouseUp);
+                  if (!hasMovedRef.current) {
+                    // التفاعل بأول نقرة وفتح نافذة الدردشة فوراً
+                    try {
+                      if (navigator.vibrate) navigator.vibrate(35);
+                    } catch (err) {}
+                    setIsActive(true);
+                    setIsDirectChatOnly(true);
+                    restartListening();
+                  } else {
+                    // أيقونة عائمة حرة تستقر بمرونة على أطراف الشاشة (Edge docking)
+                    if (typeof window !== 'undefined') {
+                      const screenW = window.innerWidth || 412;
+                      const screenH = window.innerHeight || 915;
+                      const midX = screenW / 2;
+                      const snapLeft = 8;
+                      const snapRight = Math.max(8, screenW - 64);
+                      const finalX = bubblePos.x < midX ? snapLeft : snapRight;
+                      const finalY = Math.min(Math.max(55, bubblePos.y), screenH - 85);
+                      setBubblePos({ x: finalX, y: finalY });
+                      try {
+                        localStorage.setItem('faisali_floating_pos_main', JSON.stringify({ x: finalX, y: finalY }));
+                      } catch (e) {}
+                    }
+                  }
+                };
+                window.addEventListener('mousemove', handleMouseMove);
+                window.addEventListener('mouseup', handleMouseUp);
+              }}
+              className={cn(
+                "p-3 rounded-full transition-all shadow-xl flex items-center justify-center relative cursor-grab active:cursor-grabbing",
+                isActive
+                  ? getEffectColorClass().btnActive
+                  : getEffectColorClass().btnNormal
+              )}
+              title="أيقونة المساعد الذكي العائمة - انقر لفتح الدردشة أو اسحب لتغيير المكان"
+            >
+              {isProcessing ? (
+                <Loader2 className="w-6 h-6 animate-spin text-white pointer-events-none" />
+              ) : isListening ? (
+                <div className="relative flex items-center justify-center pointer-events-none">
+                  <Mic className="w-6 h-6 text-white animate-bounce" />
+                  <span className="absolute -top-1 -right-1 w-3 h-3 bg-white rounded-full animate-ping"></span>
+                </div>
+              ) : isActive ? (
+                <div className="relative flex items-center justify-center pointer-events-none">
+                  <Sparkles className="w-6 h-6 text-white animate-spin" style={{ animationDuration: '4s' }} />
+                </div>
+              ) : (
+                <div className="relative flex items-center justify-center pointer-events-none">
+                  <GeminiIcon className="w-6 h-6 text-white transition-transform duration-500 hover:rotate-12 rounded-sm" />
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping"></span>
+                </div>
+              )}
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Manual Paste Modal for Notification Text (No browser native prompt!) */}
+      {showManualPasteModal && (
+        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 max-w-md w-full shadow-2xl dir-rtl">
+            <h3 className="text-base font-bold text-slate-900 dark:text-white mb-2 flex items-center gap-2">
+              <ClipboardPaste className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+              لصق نص رسالة الإشعار البنكي / SMS
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
+              قم بلصق أو كتابة نص الرسالة الخاصة بالإيداع أو التحويل للتحليل المباشر:
+            </p>
+            <textarea
+              rows={4}
+              value={manualPasteText}
+              onChange={(e) => setManualPasteText(e.target.value)}
+              placeholder="مثال: أودع/محمد صالح مبلغ 25000 ريال بحساب..."
+              className="w-full text-sm p-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500 mb-4 resize-none"
+              autoFocus
+            />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowManualPasteModal(false)}
+                className="px-4 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (manualPasteText.trim()) {
+                    setShowManualPasteModal(false);
+                    commitUserVoiceCommand(manualPasteText.trim());
+                  }
+                }}
+                className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors shadow-sm"
+              >
+                معالجة النص
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Message Options Action Sheet / Modal (Long Press / Click Context) */}
+      {selectedMessageForAction && (
+        <div className="fixed inset-0 z-[100001] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in dir-rtl">
+          <div className="bg-white dark:bg-slate-900 border border-emerald-500/40 rounded-3xl p-4 max-w-xs w-full shadow-2xl space-y-3 text-right">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+              <span className="font-black text-xs text-slate-800 dark:text-white flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-emerald-600" />
+                <span>خيارات الرسالة</span>
+              </span>
+              <button 
+                type="button" 
+                onClick={() => setSelectedMessageForAction(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-[11px] font-bold text-slate-700 dark:text-slate-200 bg-slate-50 dark:bg-slate-800/80 p-2.5 rounded-xl max-h-24 overflow-y-auto border border-slate-200/80 dark:border-slate-700 leading-relaxed whitespace-pre-wrap select-text">
+              {selectedMessageForAction.text}
+            </p>
+
+            <div className="grid grid-cols-1 gap-1.5 pt-1">
+              <button
+                type="button"
+                onClick={() => handleCopyChatMessage(selectedMessageForAction.text)}
+                className="w-full py-2.5 px-3 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-900 dark:text-emerald-100 border border-emerald-300/80 dark:border-emerald-700/60 rounded-xl font-black text-xs flex items-center justify-between cursor-pointer active:scale-95 transition-all"
+              >
+                <span className="flex items-center gap-2">
+                  <Copy className="w-4 h-4 text-emerald-600" />
+                  <span>نسخ النص</span>
+                </span>
+                <span className="text-[10px] text-emerald-600/80 font-bold">إلى الحافظة</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleShareChatMessage(selectedMessageForAction.text)}
+                className="w-full py-2.5 px-3 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 text-sky-900 dark:text-sky-100 border border-sky-300/80 dark:border-sky-700/60 rounded-xl font-black text-xs flex items-center justify-between cursor-pointer active:scale-95 transition-all"
+              >
+                <span className="flex items-center gap-2">
+                  <ExternalLink className="w-4 h-4 text-sky-600" />
+                  <span>مشاركة النص</span>
+                </span>
+                <span className="text-[10px] text-sky-600/80 font-bold">عبر التطبيقات</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleDeleteChatMessage(selectedMessageForAction.id)}
+                className="w-full py-2.5 px-3 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 text-rose-900 dark:text-rose-100 border border-rose-300/80 dark:border-rose-700/60 rounded-xl font-black text-xs flex items-center justify-between cursor-pointer active:scale-95 transition-all"
+              >
+                <span className="flex items-center gap-2">
+                  <Trash2 className="w-4 h-4 text-rose-600" />
+                  <span>حذف الرسالة</span>
+                </span>
+                <span className="text-[10px] text-rose-600/80 font-bold">من الدردشة</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Settings Modal */}
       <VoiceAssistantSettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+      />
+
+      {/* Voice Chats History Modal */}
+      <VoiceAssistantChatHistoryModal
+        isOpen={isChatHistoryModalOpen}
+        onClose={() => setIsChatHistoryModalOpen(false)}
+        onSelectCommand={(cmdText) => commitUserVoiceCommand(cmdText)}
       />
     </div>
   );

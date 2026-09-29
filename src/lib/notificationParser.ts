@@ -109,17 +109,27 @@ export function parseFinancialNotification(
     }
   }
 
-  // CASE 1: DEPOSIT - Starts with "أودع" or contains "أودع/..." / "أودع لك..." / "أودع [اسم]..."
+  // CASE 1: DEPOSIT - Starts with "أودع" or contains "تم إيداع" / "حوالة واردة"
   // User Requirement: "والتي تبدأ بكلمة أودع/يليه اسم المودع حيث يقترح اضافة المبلغ ك ايراد لعميل او حساب او مخزون"
-  const depositMatch = normalized.match(/(?:^|\n)\s*(?:\[[^\]]+\]\s*:?\s*)?أودع(?:\s*\/|\s*:\s*|\s+لك\s+|\s+)?([^\d\n,،\r\t]+?)(?=\s+(?:مبلغ|بحساب|لحساب|في\s+حساب|\d)|$)/i);
+  const isDepositPattern = /(?:^|\n)\s*(?:\[[^\]]+\]\s*:?\s*)?(?:أودع|اودع|تم\s+إيداع|تم\s+ايداع|إيداع|ايداع|حوالة\s+واردة|وصلتك\s+حوالة)/i.test(normalized);
 
-  if (depositMatch || /(?:^|\n)\s*(?:\[[^\]]+\]\s*:?\s*)?أودع/i.test(normalized)) {
-    let rawDepositor = depositMatch ? depositMatch[1] : '';
-    // If no clean party name after أودع, look between أودع and مبلغ
-    if (!rawDepositor) {
-      const fallbackNameMatch = normalized.match(/أودع(?:\s*\/|\s*:\s*|\s+لك\s+|\s+)(.*?)(?=\s+مبلغ|\s+\d|$)/i);
-      if (fallbackNameMatch) {
-        rawDepositor = fallbackNameMatch[1];
+  if (isDepositPattern) {
+    let rawDepositor = '';
+    
+    // Check "أودع [الاسم] مبلغ" or "أودع/[الاسم]" or "أودع لك [الاسم]"
+    const depositMatch1 = normalized.match(/(?:أودع|اودع)(?:\s*\/|\s*:\s*|\s+لك\s+|\s+)?([^\d\n,،\r\t]+?)(?=\s+(?:مبلغ|بحساب|لحساب|في\s+حساب|برقم|\d)|$)/i);
+    if (depositMatch1) {
+      rawDepositor = depositMatch1[1];
+    } else {
+      // Check "تم إيداع ... من [الاسم]" or "من [الاسم]" or "حوالة واردة من [الاسم]"
+      const fromMatch = normalized.match(/(?:من|بواسطة|عبر|المودع)\s+([^\d\n,،\r\t]+?)(?=\s+(?:مبلغ|بحساب|لحساب|في\s+حساب|برقم|\d)|$)/i);
+      if (fromMatch) {
+        rawDepositor = fromMatch[1];
+      } else {
+        const fallbackMatch = normalized.match(/(?:تم\s+إيداع|تم\s+ايداع|إيداع|ايداع)\s+(?:مبلغ\s+[0-9.,]+\s*\S*\s+)?(?:من\s+)?([^\d\n,،\r\t]+?)(?=\s+(?:مبلغ|بحساب|لحساب|في\s+حساب|\d)|$)/i);
+        if (fallbackMatch) {
+          rawDepositor = fallbackMatch[1];
+        }
       }
     }
 
@@ -149,16 +159,18 @@ export function parseFinancialNotification(
 
   // CASE 2: TRANSFER - Starts with "تم تحويل"
   // User Requirement: "اما الرسائل التي تبدا بكلمة تم تحويل اريد منه اعطائي اقتراح انشاء مصروف لحساب او عميل"
-  if (/(?:^|\n)\s*(?:\[[^\]]+\]\s*:?\s*)?تم\s+تحويل/i.test(normalized)) {
+  const isTransferPattern = /(?:^|\n)\s*(?:\[[^\]]+\]\s*:?\s*)?(?:تم\s+تحويل|تحويل|حوالة\s+صادرة|تم\s+خصم|سحب\s+نقدي)/i.test(normalized);
+
+  if (isTransferPattern) {
     // Extract recipient party name (e.g. "تم تحويل مبلغ ... إلى [اسم المستلم]" or "تم تحويل إلى [اسم] مبلغ ...")
     let recipientName = '';
-    const toMatch1 = normalized.match(/(?:إلى|لصالح|لـ|للعميل|للمورد)\s+([^\d\n,،\r\t]+?)(?=\s+(?:مبلغ|بحساب|لحساب|في\s+حساب|برقم|\d)|$)/i);
+    const toMatch1 = normalized.match(/(?:إلى|لصالح|لـ|للعميل|للمورد|المستلم)\s+([^\d\n,،\r\t]+?)(?=\s+(?:مبلغ|بحساب|لحساب|في\s+حساب|برقم|\d)|$)/i);
     if (toMatch1) {
       recipientName = cleanPartyName(toMatch1[1]);
     }
 
     if (!recipientName) {
-      const toMatch2 = normalized.match(/تم\s+تحويل\s+(?:إلى|لـ)\s+([^\d\n,،\r\t]+?)(?=\s+(?:مبلغ|\d)|$)/i);
+      const toMatch2 = normalized.match(/(?:تم\s+تحويل|تحويل)\s+(?:إلى|لـ)?\s*([^\d\n,،\r\t]+?)(?=\s+(?:مبلغ|\d)|$)/i);
       if (toMatch2) {
         recipientName = cleanPartyName(toMatch2[1]);
       }

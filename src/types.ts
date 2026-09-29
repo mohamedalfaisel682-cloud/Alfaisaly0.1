@@ -30,6 +30,9 @@ export interface Task {
   cancelledAt?: string;
   isArchived?: boolean;
   hiddenAt?: string;
+  technician?: string;
+  assignedEmployee?: string;
+  category?: string;
 }
 
 export interface Customer {
@@ -81,6 +84,7 @@ export interface Transaction {
   destinationAccount?: string;
   debtAccountId?: number;
   cashAccountId?: number;
+  relatedAccountId?: number;
   isDebtRepayment?: boolean;
   repaymentSource?: 'net_profit' | 'cashbox' | 'vault';
   isInternalFinancial?: boolean;
@@ -100,6 +104,20 @@ export interface CashAccount {
   notes?: string;
   createdAt: string;
   updatedAt?: string;
+}
+
+export interface DailyBondShortcut {
+  id: string;
+  title: string;
+  type: 'income' | 'expense';
+  description: string;
+  category: string;
+  defaultAmount?: number;
+  currency?: Currency;
+  targetType: 'account' | 'customer' | 'none';
+  targetName?: string;
+  color?: string;
+  isFavorite?: boolean;
 }
 
 export interface DebtPayment {
@@ -149,11 +167,16 @@ export interface UserPermissions {
   canViewTaskStatuses: boolean;
   canExportData: boolean;
   canImportData: boolean;
+  canUseVoiceAssistant?: boolean;
+  canUseTools?: boolean;
+  canUseFlashInterface?: boolean;
+  canManageQuickNotes?: boolean;
 }
 
 export interface User {
   id?: number;
   username: string;
+  name?: string;
   pin: string;
   role: 'admin' | 'user';
   permissions: UserPermissions;

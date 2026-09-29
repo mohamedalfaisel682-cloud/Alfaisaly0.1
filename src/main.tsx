@@ -5,6 +5,10 @@ import App from './App.tsx';
 import './index.css';
 import { registerSW } from 'virtual:pwa-register';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { initGlobalHindiDigitsConverter } from './lib/arabicDigitsConverter';
+
+// Initialize universal Hindi / Eastern Arabic numerals converter for all inputs & forms
+initGlobalHindiDigitsConverter();
 
 try {
   if (typeof window !== 'undefined' && 'serviceWorker' in navigator && window.location.protocol.startsWith('http')) {

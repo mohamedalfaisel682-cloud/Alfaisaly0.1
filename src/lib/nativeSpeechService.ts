@@ -1,11 +1,14 @@
 import { getApiUrl } from './nativeService';
+import { parseArabicSpeechToNumber } from './arabicNumberParser';
 
 export interface SpeechRecognitionOptions {
-  target: 'search' | 'assistant' | 'default';
+  target?: 'search' | 'assistant' | 'default' | string;
   language?: string;
   prompt?: string;
   continuous?: boolean;
   interimResults?: boolean;
+  isNumeric?: boolean;
+  provider?: 'samsung' | 'google' | 'auto' | string;
   onPartialResult?: (transcript: string) => void;
   onStart?: () => void;
   onResult: (transcript: string) => void;
@@ -50,11 +53,11 @@ export async function ensureAudioPermission(): Promise<boolean> {
       const { SpeechRecognition } = await import('@capacitor-community/speech-recognition');
       try {
         const status = await SpeechRecognition.checkPermissions();
-        if (status.speechRecognition === 'granted') {
+        if (status?.speechRecognition === 'granted') {
           return true;
         }
         const req = await SpeechRecognition.requestPermissions();
-        return req.speechRecognition === 'granted';
+        return req?.speechRecognition === 'granted';
       } catch (permMethodErr) {
         const has = await (SpeechRecognition as any).hasPermission();
         if (has?.permission) return true;
@@ -66,15 +69,38 @@ export async function ensureAudioPermission(): Promise<boolean> {
     }
   }
 
-  // 3. Web Permissions API Check (Safe check that does not lock or kill audio tracks)
+  // 3. Web & Android WebChromeClient Permission Check
   try {
-    if (typeof navigator !== 'undefined' && (navigator as any).permissions && (navigator as any).permissions.query) {
-      const perm = await (navigator as any).permissions.query({ name: 'microphone' });
-      if (perm && perm.state === 'denied') {
-        return false;
+    if (typeof navigator !== 'undefined') {
+      if (navigator.permissions && typeof navigator.permissions.query === 'function') {
+        try {
+          const status = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+          if (status.state === 'denied') {
+            return false;
+          }
+          if (status.state === 'granted') {
+            return true;
+          }
+        } catch (pErr) {}
+      }
+      // If Web Speech API is natively supported, let Web Speech API handle prompting naturally on start()
+      const hasWebSpeech = typeof window !== 'undefined' && ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+      if (hasWebSpeech) {
+        return true;
+      }
+
+      if (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(t => t.stop());
+        return true;
       }
     }
-  } catch (e) {}
+  } catch (err: any) {
+    console.warn("Microphone permission check status:", err?.name || err);
+    if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+      return false;
+    }
+  }
 
   return true;
 }
@@ -103,7 +129,7 @@ export async function stopAnyOngoingTTS(): Promise<void> {
  */
 export async function startMediaRecorderFallback(
   options: SpeechRecognitionOptions,
-  target: 'search' | 'assistant' | 'default' = 'default'
+  target: string = 'default'
 ): Promise<() => void> {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof window.MediaRecorder === 'undefined') {
     options.onError?.('الميكروفون غير متوفر في هذا النظام.');
@@ -172,20 +198,21 @@ export async function startMediaRecorderFallback(
           }
           const volume = total / bufferLength;
 
-          // Sound detected above background noise threshold (optimized for Samsung Note 20 Ultra: 4.5)
-          if (volume > 4.5) {
+          // Sound detected above background noise threshold (optimized for Samsung Note 20 Ultra & mobile mics: 2.0)
+          if (volume > 2.0) {
             hasDetectedSpeech = true;
             if (silenceTimer) {
               clearTimeout(silenceTimer);
               silenceTimer = null;
             }
           } else if (hasDetectedSpeech && !silenceTimer) {
-            // After user has spoken, 1.3 seconds of natural silence commits audio
+            // توسيع الفترة الزمنية لالتقاط النص بالكامل في البحث بحيث تبلغ ثانيتين (2000ms) لمنع الانقطاع بعد كلمة واحدة
+            const silenceTimeoutMs = (target.includes('search') || options.target?.includes('search')) ? 2000 : 1500;
             silenceTimer = setTimeout(() => {
               if (activeMediaRecorder && activeMediaRecorder.state === 'recording') {
                 try { activeMediaRecorder.stop(); } catch (e) {}
               }
-            }, 1300);
+            }, silenceTimeoutMs);
           }
 
           animationFrameId = requestAnimationFrame(checkVolume);
@@ -241,12 +268,15 @@ export async function startMediaRecorderFallback(
             const res = await fetch(targetUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ audioData: base64Data, mimeType })
+              body: JSON.stringify({ audioData: base64Data, mimeType, isNumeric: options.isNumeric })
             });
 
             if (res.ok) {
               const data = await res.json();
-              const transcript = (data.transcript || '').trim();
+              let transcript = (data.transcript || '').trim();
+              if (options.isNumeric && transcript) {
+                transcript = parseArabicSpeechToNumber(transcript);
+              }
               if (transcript && !hasHandled) {
                 hasHandled = true;
                 try { if (navigator.vibrate) navigator.vibrate([30, 40]); } catch (e) {}
@@ -292,9 +322,18 @@ export async function startMediaRecorderFallback(
       activeAudioStream = null;
       activeMediaRecorder = null;
     };
-  } catch (recorderErr) {
-    console.error("MediaRecorder fallback failed:", recorderErr);
-    options.onError?.('تعذر الوصول للميكروفون. يرجى التأكد من منحه الإذن.');
+  } catch (recorderErr: any) {
+    const isDenied = recorderErr?.name === 'NotAllowedError' || 
+                     recorderErr?.name === 'PermissionDeniedError' ||
+                     String(recorderErr?.message || recorderErr).toLowerCase().includes('permission') ||
+                     String(recorderErr?.message || recorderErr).toLowerCase().includes('denied');
+
+    console.warn("MediaRecorder mic access info:", recorderErr?.name || recorderErr?.message || recorderErr);
+    if (isDenied) {
+      options.onError?.('تم رفض إذن الميكروفون. يرجى تفعيل الإذن من إعدادات المتصفح أو التطبيق.');
+    } else {
+      options.onError?.('تعذر الوصول للميكروفون. يرجى التأكد من توفر لاقط صوت.');
+    }
     options.onEnd?.();
     return () => {};
   }
@@ -311,16 +350,19 @@ export async function startUnifiedSpeechRecognition(options: SpeechRecognitionOp
   const lang = options.language || 'ar-SA';
   let hasHandledResult = false;
 
+  const formatResult = (raw: string): string => {
+    const trimmed = (raw || '').trim();
+    if (options.isNumeric && trimmed) {
+      return parseArabicSpeechToNumber(trimmed);
+    }
+    return trimmed;
+  };
+
   // Haptic feedback on mobile if supported
   try {
     if (navigator.vibrate) {
       navigator.vibrate(35);
     }
-  } catch (e) {}
-
-  // Ensure microphone permission is granted across Web and Android
-  try {
-    await ensureAudioPermission();
   } catch (e) {}
 
   // =========================================================================
@@ -352,7 +394,7 @@ export async function startUnifiedSpeechRecognition(options: SpeechRecognitionOp
           if (text && !hasHandledResult) {
             hasHandledResult = true;
             try { if (navigator.vibrate) navigator.vibrate([30, 40]); } catch (e) {}
-            options.onResult(text);
+            options.onResult(formatResult(text));
           }
           options.onEnd?.();
         }
@@ -375,7 +417,7 @@ export async function startUnifiedSpeechRecognition(options: SpeechRecognitionOp
               activeCleanupFn = fallbackCleanup;
               return;
             } catch (fbErr) {
-              console.warn("MediaRecorder fallback failed:", fbErr);
+              console.warn("MediaRecorder fallback notice:", fbErr);
             }
           }
 
@@ -402,16 +444,37 @@ export async function startUnifiedSpeechRecognition(options: SpeechRecognitionOp
         }
       };
 
+      const onSpeechPartial = (e: any) => {
+        const detail = e.detail || {};
+        const eventTarget = detail.target || 'default';
+        if (eventTarget === target || eventTarget === 'default' || !target || target === 'all') {
+          const partial = detail.text || '';
+          if (partial) {
+            options.onPartialResult?.(partial);
+          }
+        }
+      };
+
       const cleanup = () => {
         window.removeEventListener('native_speech_result', onSpeechResult);
+        window.removeEventListener('speech_recognition_result', onSpeechResult);
         window.removeEventListener('native_speech_cancel', onSpeechCancel);
+        window.removeEventListener('speech_recognition_error', onSpeechCancel);
         window.removeEventListener('native_speech_start', onSpeechStart);
+        window.removeEventListener('native_speech_ready', onSpeechStart);
+        window.removeEventListener('native_speech_partial', onSpeechPartial);
+        window.removeEventListener('speech_recognition_partial', onSpeechPartial);
         activeCleanupFn = null;
       };
 
       window.addEventListener('native_speech_result', onSpeechResult);
+      window.addEventListener('speech_recognition_result', onSpeechResult);
       window.addEventListener('native_speech_cancel', onSpeechCancel);
+      window.addEventListener('speech_recognition_error', onSpeechCancel);
       window.addEventListener('native_speech_start', onSpeechStart);
+      window.addEventListener('native_speech_ready', onSpeechStart);
+      window.addEventListener('native_speech_partial', onSpeechPartial);
+      window.addEventListener('speech_recognition_partial', onSpeechPartial);
 
       activeCleanupFn = cleanup;
 
@@ -430,8 +493,12 @@ export async function startUnifiedSpeechRecognition(options: SpeechRecognitionOp
         }
       };
 
-      // Call AndroidInterface safely
-      (window as any).AndroidInterface.startSpeechRecognition(target);
+      // Call AndroidInterface safely with requested provider (e.g., samsung vs google)
+      try {
+        (window as any).AndroidInterface.startSpeechRecognition(target, options.provider || 'auto');
+      } catch (callErr) {
+        (window as any).AndroidInterface.startSpeechRecognition(target);
+      }
 
       return () => {
         cleanup();
@@ -511,7 +578,7 @@ export async function startUnifiedSpeechRecognition(options: SpeechRecognitionOp
               if (latestSpokenText && !hasHandledResult) {
                 hasHandledResult = true;
                 try { if (navigator.vibrate) navigator.vibrate([30, 40]); } catch (e) {}
-                options.onResult(latestSpokenText);
+                options.onResult(formatResult(latestSpokenText));
               }
               options.onEnd?.();
             }
@@ -541,7 +608,7 @@ export async function startUnifiedSpeechRecognition(options: SpeechRecognitionOp
             if (text && !hasHandledResult) {
               hasHandledResult = true;
               try { if (navigator.vibrate) navigator.vibrate([30, 40]); } catch (e) {}
-              options.onResult(text);
+              options.onResult(formatResult(text));
             }
           }
           options.onEnd?.();
@@ -561,7 +628,7 @@ export async function startUnifiedSpeechRecognition(options: SpeechRecognitionOp
               if (text && !hasHandledResult) {
                 hasHandledResult = true;
                 try { if (navigator.vibrate) navigator.vibrate([30, 40]); } catch (e) {}
-                options.onResult(text);
+                options.onResult(formatResult(text));
               }
             }
             options.onEnd?.();
@@ -578,6 +645,15 @@ export async function startUnifiedSpeechRecognition(options: SpeechRecognitionOp
               return cleanup;
             }
           }
+        }
+      } else {
+        // Native SpeechRecognition reported not available -> fallback immediately to MediaRecorder fallback
+        try {
+          const fb = await startMediaRecorderFallback(options, target);
+          activeCleanupFn = fb;
+          return fb;
+        } catch (fbErr) {
+          console.warn("Native fallback to MediaRecorder failed:", fbErr);
         }
       }
     } catch (pluginErr: any) {
@@ -612,78 +688,99 @@ export async function startUnifiedSpeechRecognition(options: SpeechRecognitionOp
       };
 
       let latestCapturedText = '';
+      let latestFullFinalText = '';
 
       recognition.onresult = (event: any) => {
         let interimText = '';
-        let finalText = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const trans = event.results[i][0]?.transcript || '';
-          if (event.results[i].isFinal) {
-            finalText += trans;
+        let finals = '';
+        for (let i = 0; i < event.results.length; ++i) {
+          const res = event.results[i];
+          const trans = res[0]?.transcript || '';
+          if (res.isFinal) {
+            finals += (finals ? ' ' : '') + trans.trim();
           } else {
-            interimText += trans;
+            interimText += (interimText ? ' ' : '') + trans.trim();
           }
         }
 
-        const currentStream = (finalText || interimText).trim();
+        const currentStream = (finals + (interimText ? (finals ? ' ' : '') + interimText : '')).trim();
         if (currentStream) {
           latestCapturedText = currentStream;
+          if (finals.trim()) {
+            latestFullFinalText = finals.trim();
+          }
           if (options.onPartialResult) {
             options.onPartialResult(currentStream);
           }
         }
-
-        const clean = finalText.trim();
-        if (clean && !hasHandledResult) {
-          hasHandledResult = true;
-          try { if (navigator.vibrate) navigator.vibrate([30, 40]); } catch (e) {}
-          options.onResult(clean);
-        }
       };
+
+      let isSwitchingToFallback = false;
 
       recognition.onerror = async (event: any) => {
         const error = event.error;
-        if (error === 'no-speech') {
-          // If no speech was caught by Web Speech API in WebView, seamlessly fallback to AI MediaRecorder
-          if (!hasHandledResult) {
-            try {
-              const fb = await startMediaRecorderFallback(options, target);
-              activeCleanupFn = fb;
-              return;
-            } catch (e) {}
-          }
-          if (options.target === 'assistant') {
-            options.onError?.('no-speech');
-            return;
-          }
-          options.onEnd?.();
-          return;
-        }
+        console.warn("Web SpeechRecognition error:", error);
+
         if (error === 'aborted') {
+          if (!isSwitchingToFallback) {
+            options.onEnd?.();
+          }
+          return;
+        }
+
+        // If permission was denied by user or environment, notify cleanly and do NOT attempt fallback
+        if (error === 'not-allowed' || error === 'service-not-allowed' || error === 'audio-capture') {
+          console.warn("Speech recognition mic permission status:", error);
+          options.onError?.('تم رفض إذن الميكروفون. يرجى تفعيله من إعدادات المتصفح أو الهاتف.');
           options.onEnd?.();
           return;
         }
-        if (error === 'not-allowed' || error === 'service-not-allowed') {
-          options.onError?.('تم رفض إذن الميكروفون. يرجى تفعيله من إعدادات الهاتف.');
+
+        // If we already captured valid speech text, commit it immediately!
+        const textToCommit = (latestFullFinalText || latestCapturedText || '').trim();
+        if (textToCommit && !hasHandledResult) {
+          hasHandledResult = true;
+          try { if (navigator.vibrate) navigator.vibrate([30, 40]); } catch (e) {}
+          options.onResult(formatResult(textToCommit));
           options.onEnd?.();
-        } else {
-          // Switch to MediaRecorder
+          return;
+        }
+
+        // Only switch to MediaRecorder for real engine or network failures (not simple pause in speech, abort, or permission denial)
+        if (!hasHandledResult && error !== 'no-speech' && error !== 'aborted') {
+          isSwitchingToFallback = true;
+          try {
+            recognition.stop();
+          } catch (e) {}
           try {
             const fb = await startMediaRecorderFallback(options, target);
             activeCleanupFn = fb;
             return;
           } catch (e) {
-            options.onError?.(`خطأ في التعرف الصوتي (${error}).`);
+            options.onError?.('تعذر تشغيل الميكروفون. يرجى التحقق من الأذونات.');
             options.onEnd?.();
+            return;
           }
+        }
+
+        if (error === 'no-speech') {
+          // Natural silence timeout - cleanly complete
+          options.onEnd?.();
+        } else {
+          options.onEnd?.();
         }
       };
 
       recognition.onend = () => {
-        if (!hasHandledResult && latestCapturedText) {
+        if (isSwitchingToFallback) {
+          activeRecognitionInstance = null;
+          return;
+        }
+        const textToCommit = (latestFullFinalText || latestCapturedText || '').trim();
+        if (!hasHandledResult && textToCommit) {
           hasHandledResult = true;
           try { if (navigator.vibrate) navigator.vibrate([30, 40]); } catch (e) {}
-          options.onResult(latestCapturedText);
+          options.onResult(formatResult(textToCommit));
         }
         options.onEnd?.();
         activeRecognitionInstance = null;
@@ -694,6 +791,12 @@ export async function startUnifiedSpeechRecognition(options: SpeechRecognitionOp
       return () => {
         try { recognition.stop(); } catch (e) {}
         activeRecognitionInstance = null;
+        const textToCommit = (latestFullFinalText || latestCapturedText || '').trim();
+        if (!hasHandledResult && textToCommit) {
+          hasHandledResult = true;
+          try { if (navigator.vibrate) navigator.vibrate([30, 40]); } catch (e) {}
+          options.onResult(formatResult(textToCommit));
+        }
       };
     } catch (err: any) {
       console.warn("Web SpeechRecognition start failed, trying MediaRecorder fallback:", err);
@@ -741,4 +844,28 @@ export function stopUnifiedSpeechRecognition(): void {
     } catch (e) {}
     activeAudioStream = null;
   }
+}
+
+/**
+ * Helper to update input/textarea values cleanly in React with full event propagation
+ */
+export function setNativeInputValue(element: HTMLInputElement | HTMLTextAreaElement | null, value: string) {
+  if (!element) return;
+  try {
+    const proto = element instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+    const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+    if (nativeSetter) {
+      nativeSetter.call(element, value);
+    } else {
+      element.value = value;
+    }
+  } catch (e) {
+    element.value = value;
+  }
+  try {
+    const inputEvt = new Event('input', { bubbles: true });
+    element.dispatchEvent(inputEvt);
+    const changeEvt = new Event('change', { bubbles: true });
+    element.dispatchEvent(changeEvt);
+  } catch (e) {}
 }

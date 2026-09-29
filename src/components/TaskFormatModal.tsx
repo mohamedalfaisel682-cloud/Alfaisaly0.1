@@ -317,7 +317,7 @@ export const TaskFormatModal: React.FC<TaskFormatModalProps> = ({
                         </option>
                       ))}
                     </select>
-                    <p className="text-[10px] text-slate-400 font-medium">
+                    <p className="text-[11px] text-slate-700 dark:text-slate-300 font-bold">
                       يُطبّق تلقائياً عند حفظ وتصدير سند المهمة كصورة للمشاركة عبر الواتساب
                     </p>
                   </div>
@@ -346,7 +346,7 @@ export const TaskFormatModal: React.FC<TaskFormatModalProps> = ({
                         </option>
                       ))}
                     </select>
-                    <p className="text-[10px] text-slate-400 font-medium">
+                    <p className="text-[11px] text-slate-700 dark:text-slate-300 font-bold">
                       يُطبّق تلقائياً عند تصدير المهمة كمستند PDF أو أمر تسليم رسمي
                     </p>
                   </div>
@@ -421,28 +421,28 @@ export const TaskFormatModal: React.FC<TaskFormatModalProps> = ({
                         toast.success(`تم اختيار ${tmpl.title}`);
                       }}
                       className={cn(
-                        "text-right p-4 rounded-2xl border-2 transition-all flex flex-col justify-between gap-3 cursor-pointer relative",
+                        "text-right p-4 rounded-2xl border-2 transition-all flex flex-col justify-between gap-3 cursor-pointer relative shadow-xs",
                         isSelected
-                          ? "border-amber-500 bg-amber-50/40 dark:bg-amber-950/30 shadow-md ring-2 ring-amber-500/20"
-                          : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-850 hover:border-slate-300 dark:hover:border-slate-700"
+                          ? "border-amber-500 bg-amber-50 dark:bg-amber-950/60 shadow-md ring-2 ring-amber-500/20"
+                          : "border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-850 hover:bg-white dark:hover:bg-slate-800"
                       )}
                     >
                       <div>
                         <div className="flex items-center justify-between gap-2 mb-2">
                           <div className="flex items-center gap-2">
                             <div className={cn(
-                              "w-8 h-8 rounded-xl flex items-center justify-center shrink-0",
-                              isSelected ? "bg-amber-500 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+                              "w-8 h-8 rounded-xl flex items-center justify-center shrink-0 shadow-xs",
+                              isSelected ? "bg-amber-500 text-white" : "bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200"
                             )}>
-                              <Icon className="w-4 h-4" />
+                              <Icon className="w-4 h-4 stroke-[2.5]" />
                             </div>
-                            <span className="text-xs font-black text-slate-900 dark:text-white leading-tight">
+                            <span className="text-xs sm:text-sm font-black text-slate-950 dark:text-white leading-tight">
                               {tmpl.title}
                             </span>
                           </div>
                           {isSelected && (
-                            <span className="w-6 h-6 rounded-full bg-amber-500 text-white flex items-center justify-center shrink-0" title="النسق المحدد حالياً">
-                              <Check className="w-3.5 h-3.5" />
+                            <span className="w-6 h-6 rounded-full bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs" title="النسق المحدد حالياً">
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
                             </span>
                           )}
                         </div>
@@ -465,7 +465,7 @@ export const TaskFormatModal: React.FC<TaskFormatModalProps> = ({
                           </div>
                         )}
 
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium leading-relaxed mb-3">
+                        <p className="text-xs text-slate-800 dark:text-slate-200 font-bold leading-relaxed mb-3 bg-white/80 dark:bg-slate-900/60 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700">
                           {tmpl.desc}
                         </p>
                       </div>

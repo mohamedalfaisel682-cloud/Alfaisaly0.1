@@ -645,7 +645,7 @@ export const NoteEntitySelector: React.FC<NoteEntitySelectorProps> = ({
             </div>
 
             {/* مربع البحث السريع الشبيه بمربع البحث السريع في التطبيق */}
-            <div className="relative">
+            <div className="relative flex items-center">
               <input
                 type="text"
                 value={searchQuery}
@@ -659,19 +659,20 @@ export const NoteEntitySelector: React.FC<NoteEntitySelectorProps> = ({
                     ? "بحث سريع في المخزن (اسم الصنف، الكود، الفئة)..."
                     : "بحث سريع في الحسابات (اسم الحساب، النوع، العملة)..."
                 }
-                className="w-full pl-7 pr-8 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 placeholder-slate-400"
+                className="w-full pl-9 pr-8 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 placeholder-slate-400"
                 autoFocus
               />
               <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              {searchQuery && (
+              {searchQuery ? (
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                  className="absolute left-0 top-0 bottom-0 h-full aspect-square bg-red-500 hover:bg-red-600 active:bg-red-700 text-white transition-all cursor-pointer flex items-center justify-center shrink-0 font-bold rounded-l-xl"
+                  title="مسح النص وإلغاء المدخلات بنقرة واحدة"
                 >
-                  <X className="w-3 h-3" />
+                  <X className="w-3.5 h-3.5 stroke-[3]" />
                 </button>
-              )}
+              ) : null}
             </div>
           </div>
 

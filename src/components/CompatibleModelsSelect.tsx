@@ -384,7 +384,7 @@ export const CompatibleModelsSelect: React.FC<CompatibleModelsSelectProps> = ({
 
                 {/* Search input identical to CustomerSelect */}
                 <div className="p-2 border-b border-slate-100 bg-slate-50/60">
-                  <div className="relative">
+                  <div className="relative flex items-center">
                     <Search className="w-4 h-4 absolute right-2.5 top-2.5 text-slate-400 pointer-events-none" />
                     <input 
                       type="text"
@@ -395,15 +395,16 @@ export const CompatibleModelsSelect: React.FC<CompatibleModelsSelectProps> = ({
                       onChange={(e) => setSearch(e.target.value)}
                       className="w-full pr-8 pl-8 py-2 text-xs font-bold bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 shadow-3xs"
                     />
-                    {search && (
+                    {search ? (
                       <button
                         type="button"
                         onClick={() => setSearch('')}
-                        className="absolute left-2.5 top-2.5 p-0.5 text-slate-400 hover:text-slate-600"
+                        className="absolute left-0 top-0 bottom-0 h-full aspect-square bg-red-500 hover:bg-red-600 active:bg-red-700 text-white transition-all cursor-pointer flex items-center justify-center shrink-0 font-bold rounded-l-xl"
+                        title="مسح النص وإلغاء المدخلات بنقرة واحدة"
                       >
-                        <X className="w-3.5 h-3.5" />
+                        <X className="w-3.5 h-3.5 stroke-[3]" />
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 </div>
 

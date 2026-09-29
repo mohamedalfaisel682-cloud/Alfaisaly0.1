@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Building2, User, Plus, X, ChevronDown, Check, Sparkles } from 'lucide-react';
+import { Building2, User, Plus, X, ChevronDown, Check, Sparkles, BookmarkCheck } from 'lucide-react';
 import { Customer, CashAccount } from '../types';
 import { cn } from '../lib/utils';
+import { VoiceInputButton } from './VoiceInputButton';
+import { toStandardDigits } from '../lib/arabicDigitsConverter';
 
 export interface AccountOrCustomerSelectProps {
   value: string;
@@ -13,6 +15,19 @@ export interface AccountOrCustomerSelectProps {
   className?: string;
   onQuickCreateAccount?: (name: string) => Promise<void> | void;
 }
+
+// Smart Arabic normalizer for pristine search & autocompletion
+const normalizeArabicText = (text: string): string => {
+  if (!text) return '';
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[\u064B-\u065F\u0670]/g, '')
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/[يى]/g, 'ي')
+    .replace(/[\s\-_]+/g, '');
+};
 
 export const AccountOrCustomerSelect: React.FC<AccountOrCustomerSelectProps> = ({
   value,
@@ -26,7 +41,16 @@ export const AccountOrCustomerSelect: React.FC<AccountOrCustomerSelectProps> = (
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState(value || '');
-  const [activeTab, setActiveTab] = useState<'all' | 'accounts' | 'customers'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'accounts' | 'customers'>(() => {
+    return (localStorage.getItem('account_customer_select_tab_default') as any) || 'all';
+  });
+  const [savedTabFeedback, setSavedTabFeedback] = useState(false);
+
+  const handleSaveTabDefault = () => {
+    localStorage.setItem('account_customer_select_tab_default', activeTab);
+    setSavedTabFeedback(true);
+    setTimeout(() => setSavedTabFeedback(false), 2200);
+  };
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -50,12 +74,17 @@ export const AccountOrCustomerSelect: React.FC<AccountOrCustomerSelectProps> = (
     };
   }, [isOpen]);
 
-  const trimmedQuery = search.trim().toLowerCase();
+  const query = search.trim();
+  const trimmedQuery = query.toLowerCase();
+  const stdQuery = toStandardDigits(trimmedQuery);
+  const normQuery = normalizeArabicText(query);
 
   // Filter accounts
   const filteredAccounts = cashAccounts.filter(acc => {
     if (!trimmedQuery) return true;
-    const matchName = (acc.name || '').toLowerCase().includes(trimmedQuery);
+    const rawName = (acc.name || '').toLowerCase();
+    const normName = normalizeArabicText(acc.name || '');
+    const matchName = rawName.includes(trimmedQuery) || rawName.includes(stdQuery) || normName.includes(normQuery);
     const matchClass = (acc.classification || '').toLowerCase().includes(trimmedQuery);
     return matchName || matchClass;
   });
@@ -63,17 +92,21 @@ export const AccountOrCustomerSelect: React.FC<AccountOrCustomerSelectProps> = (
   // Filter customers
   const filteredCustomers = customers.filter(cust => {
     if (!trimmedQuery) return true;
-    const matchName = (cust.name || '').toLowerCase().includes(trimmedQuery);
-    const matchPhone = (cust.phone || '').toLowerCase().includes(trimmedQuery);
+    const rawName = (cust.name || '').toLowerCase();
+    const normName = normalizeArabicText(cust.name || '');
+    const matchName = rawName.includes(trimmedQuery) || rawName.includes(stdQuery) || normName.includes(normQuery);
+    const matchPhone = (cust.phone || '').includes(trimmedQuery) || 
+                       (cust.phone || '').includes(stdQuery) || 
+                       (cust.phones && cust.phones.some(p => p && (p.includes(trimmedQuery) || p.includes(stdQuery))));
     const matchClass = (cust.classification || '').toLowerCase().includes(trimmedQuery);
     return matchName || matchPhone || matchClass;
   });
 
   const exactMatchAccount = cashAccounts.find(
-    a => (a.name || '').trim().toLowerCase() === trimmedQuery
+    a => (a.name || '').trim().toLowerCase() === trimmedQuery || normalizeArabicText(a.name || '') === normQuery
   );
   const exactMatchCustomer = customers.find(
-    c => (c.name || '').trim().toLowerCase() === trimmedQuery
+    c => (c.name || '').trim().toLowerCase() === trimmedQuery || normalizeArabicText(c.name || '') === normQuery
   );
   const hasExactMatch = Boolean(exactMatchAccount || exactMatchCustomer);
   const canShowCreateOption = trimmedQuery.length > 0 && !hasExactMatch;
@@ -104,7 +137,8 @@ export const AccountOrCustomerSelect: React.FC<AccountOrCustomerSelectProps> = (
     e.stopPropagation();
     setSearch('');
     onChange('');
-    inputRef.current?.focus();
+    setIsOpen(false);
+    inputRef.current?.blur();
   };
 
   return (
@@ -116,6 +150,7 @@ export const AccountOrCustomerSelect: React.FC<AccountOrCustomerSelectProps> = (
           name={name}
           autoComplete="off"
           value={search}
+          onClick={() => { if (!isOpen) setIsOpen(true); }}
           onChange={(e) => {
             const val = e.target.value;
             setSearch(val);
@@ -124,35 +159,48 @@ export const AccountOrCustomerSelect: React.FC<AccountOrCustomerSelectProps> = (
           }}
           onFocus={() => setIsOpen(true)}
           placeholder={placeholder}
-          className={cn(className, 'pr-8 pl-16')}
+          className={cn(className, search ? 'pl-20 pr-8' : 'pl-14 pr-8')}
         />
 
-        {/* Clear and Dropdown buttons */}
-        <div className="absolute left-2 flex items-center gap-1">
-          {search ? (
-            <button
-              type="button"
-              onClick={handleClear}
-              className="p-1 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-200/60 transition-colors"
-              title="مسح"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          ) : null}
+        {/* Clear, Voice and Dropdown buttons at left edge */}
+        <div className="absolute left-0 top-0 bottom-0 h-full flex items-center z-10 overflow-hidden rounded-l-xl">
           <button
             type="button"
             onClick={() => setIsOpen(!isOpen)}
-            className="p-1 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-200/60 transition-colors"
+            className="px-1 text-slate-400 hover:text-slate-600 transition-colors"
             title="إظهار الاقتراحات"
           >
             <ChevronDown className={cn('w-4 h-4 transition-transform', isOpen && 'rotate-180')} />
           </button>
+          <div className="px-0.5">
+            <VoiceInputButton
+              inputRef={inputRef}
+              isNumeric={false}
+              target="account-customer-name"
+              title="إدخال اسم الحساب أو العميل بالصوت"
+              onResult={(text) => {
+                setSearch(text);
+                onChange(text, { type: 'new' });
+                setIsOpen(true);
+              }}
+            />
+          </div>
+          {search ? (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="h-full aspect-square bg-red-500 hover:bg-red-600 active:bg-red-700 text-white transition-all cursor-pointer flex items-center justify-center shrink-0 font-bold"
+              title="مسح النص وإلغاء المدخلات بنقرة واحدة"
+            >
+              <X className="w-4 h-4 stroke-[3]" />
+            </button>
+          ) : null}
         </div>
       </div>
 
       {/* Floating Suggestions Dropdown */}
       {isOpen && (
-        <div className="absolute z-50 right-0 left-0 mt-1.5 bg-white border border-slate-200/90 rounded-xl shadow-xl overflow-hidden max-h-72 flex flex-col animate-in fade-in-50 duration-150">
+        <div className="absolute z-[99999] right-0 left-0 mt-1.5 bg-white border-2 border-emerald-500/80 rounded-xl shadow-2xl overflow-hidden max-h-72 flex flex-col animate-in fade-in-50 duration-150">
           {/* Filter sub-header */}
           <div className="p-1.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between text-xs">
             <div className="flex items-center gap-1">
@@ -195,9 +243,25 @@ export const AccountOrCustomerSelect: React.FC<AccountOrCustomerSelectProps> = (
                 <span>العملاء ({filteredCustomers.length})</span>
               </button>
             </div>
-            <span className="text-[10px] text-slate-400 font-medium hidden sm:inline">
-              اقتراحات الحسابات والعملاء
-            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleSaveTabDefault}
+                className={cn(
+                  "flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-black transition-all cursor-pointer border select-none",
+                  savedTabFeedback
+                    ? "bg-emerald-600 text-white border-emerald-700 shadow-xs"
+                    : "bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200"
+                )}
+                title="حفظ تبويب الاقتراحات كافتراضي"
+              >
+                <BookmarkCheck className="w-3 h-3 text-amber-700" />
+                <span>{savedTabFeedback ? 'تم الحفظ' : 'حفظ كافتراضي'}</span>
+              </button>
+              <span className="text-[10px] text-slate-400 font-medium hidden sm:inline">
+                اقتراحات الحسابات والعملاء
+              </span>
+            </div>
           </div>
 
           {/* Quick Create Prompt if typed name does not match existing account */}

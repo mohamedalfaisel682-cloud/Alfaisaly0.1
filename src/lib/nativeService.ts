@@ -85,8 +85,7 @@ export const exportBackupToAndroidNativeDrive = async (jsonContent: string, file
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
           await navigator.share({
             files: [file],
-            title: fileName,
-            text: 'نسخة احتياطية لتطبيق الفيصلي - حفظ في Google Drive أو ذاكرة الجهاز'
+            title: fileName
           });
           return true;
         }
@@ -118,11 +117,11 @@ export const downloadBlob = async (blob: Blob, fileName: string): Promise<boolea
       });
 
       if (base64Data) {
-        if ((window as any).AndroidInterface.saveFileAndShare) {
-          (window as any).AndroidInterface.saveFileAndShare(base64Data, fileName);
-          return true;
-        } else if ((window as any).AndroidInterface.saveFile) {
+        if ((window as any).AndroidInterface.saveFile) {
           (window as any).AndroidInterface.saveFile(base64Data, fileName);
+          return true;
+        } else if ((window as any).AndroidInterface.saveFileAndShare) {
+          (window as any).AndroidInterface.saveFileAndShare(base64Data, fileName);
           return true;
         }
       }
@@ -364,70 +363,36 @@ export const shareTextNative = async (text: string, title: string = 'مشارك�
       return true;
     }
   }
-};
+}
 
 /**
- * Android 13 (Galaxy Note 20 Ultra) Floating Overlay & Background Standby Service
+ * فحص وطلب صلاحيات الإشعارات والرسائل النصية SMS على نظام أندرويد (Note 20 Ultra / Android 13)
  */
-export const requestOverlayPermission = async (): Promise<boolean> => {
-  try {
-    if ((window as any).AndroidInterface && (window as any).AndroidInterface.requestOverlayPermission) {
-      return !!(window as any).AndroidInterface.requestOverlayPermission();
-    }
-    // On native Capacitor, trigger intent to ACTION_MANAGE_OVERLAY_PERMISSION
-    if (Capacitor.isNativePlatform()) {
-      try {
-        const App = (await import('@capacitor/app')).App;
-        // Broadcast custom event or intent if available
-        return true;
-      } catch (e) {
-        console.warn('Capacitor overlay permission intent failed:', e);
-      }
-    }
+export const requestNotificationAndSmsPermissionsNative = (): boolean => {
+  if (typeof (window as any).AndroidInterface !== 'undefined' && (window as any).AndroidInterface.requestNotificationAndSmsPermissions) {
+    (window as any).AndroidInterface.requestNotificationAndSmsPermissions();
     return true;
-  } catch (err) {
-    console.warn('Overlay permission request error:', err);
-    return false;
   }
+  return false;
 };
 
-export const hasOverlayPermission = (): boolean => {
-  if ((window as any).AndroidInterface && typeof (window as any).AndroidInterface.hasOverlayPermission === 'function') {
-    return !!(window as any).AndroidInterface.hasOverlayPermission();
+export const openNotificationListenerSettingsNative = (): boolean => {
+  if (typeof (window as any).AndroidInterface !== 'undefined' && (window as any).AndroidInterface.openNotificationListenerSettings) {
+    (window as any).AndroidInterface.openNotificationListenerSettings();
+    return true;
   }
-  return true;
+  return false;
 };
 
-/**
- * Open or restore full application window from floating assistant view
- */
-export const openFullAppNative = async () => {
-  try {
-    // 1. AndroidInterface direct hook
-    if ((window as any).AndroidInterface && (window as any).AndroidInterface.openFullApp) {
-      (window as any).AndroidInterface.openFullApp();
-      return;
-    }
-
-    // 2. Bring window / app to foreground
-    if (typeof window !== 'undefined') {
-      window.focus();
-      // Notify main app to exit mini/chat-only mode
-      window.dispatchEvent(new CustomEvent('open_full_app'));
-      window.dispatchEvent(new CustomEvent('restore_app_window'));
-    }
-  } catch (e) {
-    console.warn('Could not restore full app natively:', e);
+export const checkNotificationAndSmsStatusNative = () => {
+  const iface = (window as any).AndroidInterface;
+  if (!iface) {
+    return { isNative: false, smsGranted: false, notifGranted: false, listenerEnabled: false };
   }
-};
-
-/**
- * Sync floating widget state with native Android background service
- */
-export const setFloatingWidgetNativeState = (enabled: boolean) => {
-  try {
-    if ((window as any).AndroidInterface && (window as any).AndroidInterface.setFloatingWidgetEnabled) {
-      (window as any).AndroidInterface.setFloatingWidgetEnabled(enabled);
-    }
-  } catch (e) {}
+  return {
+    isNative: true,
+    smsGranted: iface.isSmsPermissionGranted ? !!iface.isSmsPermissionGranted() : false,
+    notifGranted: iface.isNotificationPermissionGranted ? !!iface.isNotificationPermissionGranted() : true,
+    listenerEnabled: iface.isNotificationListenerEnabled ? !!iface.isNotificationListenerEnabled() : false,
+  };
 };

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { 
   Settings2, 
   Volume2, 
+  VolumeX,
   Mic, 
   Sparkles, 
   Check, 
@@ -27,13 +28,15 @@ import {
   CheckCircle2,
   AlertTriangle,
   RefreshCw,
+  Bot,
   Search,
+  Layers,
+  LayoutDashboard,
+  ExternalLink,
+  MousePointerClick,
   Smartphone,
   AppWindow,
-  ExternalLink,
-  Radio,
-  Eye,
-  Layers
+  ArrowRight
 } from 'lucide-react';
 import { 
   VoiceAssistantSettings, 
@@ -47,12 +50,7 @@ import {
   getBestArabicVoice 
 } from '../lib/voiceSettings';
 import { parseFinancialNotification, ParsedFinancialNotification } from '../lib/notificationParser';
-import { speakImportantNotification } from '../lib/ttsService';
-import { 
-  requestOverlayPermission, 
-  hasOverlayPermission, 
-  setFloatingWidgetNativeState 
-} from '../lib/nativeService';
+import { speakImportantNotification, speakTtsText } from '../lib/ttsService';
 import { cn } from '../lib/utils';
 
 interface VoiceAssistantSettingsModalProps {
@@ -75,6 +73,7 @@ export const VoiceAssistantSettingsModal: React.FC<VoiceAssistantSettingsModalPr
   const [editingSenderName, setEditingSenderName] = useState('');
   const [testNotificationText, setTestNotificationText] = useState('أودع/محمد سالم مبلغ 35000 ريال إلى حسابك رقم 123456 عبر الكريمي');
   const [testParseResult, setTestParseResult] = useState<ParsedFinancialNotification | null>(null);
+  const [isTestingNotification, setIsTestingNotification] = useState(false);
 
   // Fetch available voices on load
   useEffect(() => {
@@ -98,6 +97,14 @@ export const VoiceAssistantSettingsModal: React.FC<VoiceAssistantSettingsModalPr
   }, [isOpen]);
 
   if (!isOpen) return null;
+
+  const updateSettingImmediate = (key: keyof VoiceAssistantSettings, value: any) => {
+    setSettings(prev => {
+      const updated = { ...prev, [key]: value };
+      saveVoiceSettings(updated);
+      return updated;
+    });
+  };
 
   const handleSave = () => {
     const finalSettings = { ...settings };
@@ -172,111 +179,26 @@ export const VoiceAssistantSettingsModal: React.FC<VoiceAssistantSettingsModalPr
 
   const testSpeech = async () => {
     try {
-      const sampleText = cleanTextForArabicSpeech('مرحباً بك! أنا مساعد الفيصل الصوتي الذكي، أعمل بدقة عالية وجودة نطق عربية ممتازة.');
+      const sampleText = cleanTextForArabicSpeech(
+        settings.voiceGender === 'male'
+          ? 'مرحباً بك! أنا مساعد الفيصل الصوتي، أعمل بصوت رجالي فصيح وبدقة عالية وفق محرك هاتفك الافتراضي بدون أي حركات نطق.'
+          : settings.voiceGender === 'female'
+          ? 'مرحباً بك! أنا مساعدة الفيصل الصوتية، أعمل بنبرة أنثوية نقية وفق محرك هاتفك الافتراضي بدون حركات نطق.'
+          : 'مرحباً بك! أنا مساعد الفيصل الصوتي، أعمل وفق المحرك الصوتي الافتراضي لهاتفك مباشرة.'
+      );
       setIsTestingSpeech(true);
 
-      const provider = settings.voiceEngineProvider || 'auto';
+      // Save current selection momentarily to memory so speakTtsText respects changes before saving
+      saveVoiceSettings(settings);
 
-      // If provider is gemini_stream or auto (and user didn't pick samsung/google specifically)
-      if (provider === 'gemini_stream') {
-        try {
-          const { getApiUrl } = await import('../lib/nativeService');
-          const ttsUrl = getApiUrl(`/api/assistant/tts?text=${encodeURIComponent(sampleText)}`);
-          const audio = new Audio(ttsUrl);
-          audio.playbackRate = settings.rate || 1.0;
-          audio.onended = () => setIsTestingSpeech(false);
-          audio.onerror = () => setIsTestingSpeech(false);
-          await audio.play();
-          return;
-        } catch (e) {
-          console.warn("TTS Stream preview failed:", e);
-        }
-      }
+      await speakTtsText(sampleText, {
+        rate: settings.voiceGender === 'male' ? (settings.rate || 0.94) : (settings.rate || 0.95),
+        pitch: settings.voiceGender === 'male' ? (settings.pitch || 0.82) : settings.voiceGender === 'female' ? (settings.pitch || 1.05) : (settings.pitch || 0.95),
+        volume: settings.volume || 1.0,
+        voiceGender: settings.voiceGender || 'male'
+      });
 
-      // Try native Capacitor next
-      try {
-        const { Capacitor } = await import('@capacitor/core');
-        if (Capacitor.isNativePlatform() || !!(window as any).Capacitor?.isNativePlatform?.()) {
-          const { TextToSpeech } = await import('@capacitor-community/text-to-speech');
-          await TextToSpeech.stop().catch(() => {});
-          
-          let voiceIndex: number | undefined = undefined;
-          let hasArabicNative = false;
-          try {
-            const { voices } = await TextToSpeech.getSupportedVoices();
-            if (voices && voices.length > 0) {
-              // Check if Samsung or Google voice requested
-              if (provider === 'samsung_voice' || provider === 'samsung_tts') {
-                const sIdx = voices.findIndex(v => (v.name || '').toLowerCase().includes('samsung') || (v.name || '').toLowerCase().includes('galaxy'));
-                if (sIdx >= 0) voiceIndex = sIdx;
-              } else if (provider === 'google_voice' || provider === 'google_tts') {
-                const gIdx = voices.findIndex(v => (v.name || '').toLowerCase().includes('google') || (v.name || '').toLowerCase().includes('speech services'));
-                if (gIdx >= 0) voiceIndex = gIdx;
-              }
-
-              if (typeof voiceIndex === 'undefined') {
-                const maleKeywords = ['male', 'رجل', 'ذكور', 'ذكر', 'ard', 'arb', 'arz', 'naayf', 'shakir', 'tarik', 'maged', 'salman', 'hamdan', 'ar-xa', 'ar-sa-x'];
-                const maleIdx = voices.findIndex(v => 
-                  ((v.lang || '').toLowerCase().replace('_', '-').startsWith('ar') || (v.name || '').toLowerCase().includes('arabic') || (v.name || '').includes('العربية')) &&
-                  maleKeywords.some(kw => (v.name || '').toLowerCase().includes(kw))
-                );
-                if (maleIdx >= 0) {
-                  voiceIndex = maleIdx;
-                  hasArabicNative = true;
-                } else {
-                  const anyArIdx = voices.findIndex(v => 
-                    (v.lang || '').toLowerCase().replace('_', '-').startsWith('ar') || 
-                    (v.name || '').toLowerCase().includes('arabic') || 
-                    (v.name || '').includes('العربية')
-                  );
-                  if (anyArIdx >= 0) {
-                    voiceIndex = anyArIdx;
-                    hasArabicNative = true;
-                  }
-                }
-              } else {
-                hasArabicNative = true;
-              }
-            }
-          } catch (vErr) {}
-
-          if (hasArabicNative) {
-            const speakOptions: any = {
-              text: sampleText,
-              lang: 'ar-SA',
-              rate: settings.rate || 0.95,
-              pitch: settings.pitch || 0.84,
-              volume: settings.volume || 1.0,
-              category: 'ambient',
-            };
-            if (typeof voiceIndex === 'number') {
-              speakOptions.voice = voiceIndex;
-            }
-            await TextToSpeech.speak(speakOptions);
-            setIsTestingSpeech(false);
-            return;
-          }
-        }
-      } catch (capErr) {}
-
-      // Fallback to Web Speech
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(sampleText);
-        utterance.lang = 'ar-SA';
-        utterance.volume = settings.volume;
-        utterance.rate = settings.rate;
-        utterance.pitch = settings.pitch || 0.84;
-
-        utterance.onstart = () => setIsTestingSpeech(true);
-        utterance.onend = () => setIsTestingSpeech(false);
-        utterance.onerror = () => setIsTestingSpeech(false);
-
-        const voice = getBestArabicVoice(settings.voiceName, settings.voiceEngineProvider);
-        if (voice) utterance.voice = voice;
-
-        window.speechSynthesis.speak(utterance);
-      }
+      setIsTestingSpeech(false);
     } catch (e) {
       console.warn('Speech test error:', e);
       setIsTestingSpeech(false);
@@ -284,27 +206,63 @@ export const VoiceAssistantSettingsModal: React.FC<VoiceAssistantSettingsModalPr
   };
 
   const modalContent = (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[99999] flex items-center justify-center p-3 sm:p-4 dir-rtl text-right animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[99999] flex flex-col dir-rtl text-right">
+      {/* Backdrop */}
       <div 
-        className="bg-white border border-slate-200 w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        className="fixed inset-0 z-[9998] bg-slate-900/60 backdrop-blur-sm transition-opacity duration-300 animate-in fade-in"
+        onClick={onClose}
+      />
+      {/* Full screen modal container */}
+      <div 
+        dir="rtl"
+        style={{
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: 0,
+          width: '100%',
+          height: '100%',
+          maxWidth: '100%',
+          maxHeight: '100%',
+          margin: 0,
+          boxSizing: 'border-box'
+        }}
+        className="fixed inset-0 z-[9999] w-full h-full m-0 max-w-full max-h-full bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 rounded-none shadow-2xl flex flex-col overflow-hidden transition-all duration-300 animate-in slide-in-from-bottom pb-[max(0.75rem,env(safe-area-inset-bottom,16px))]"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Top drag handle indicator matching VoiceAssistant */}
+        <div 
+          className="pt-2 pb-1.5 flex justify-center cursor-pointer select-none shrink-0" 
+          onClick={onClose}
+          title="انقر للإغلاق"
+        >
+          <div className="w-14 h-1.5 bg-slate-400/40 hover:bg-slate-500/60 rounded-full transition-colors" />
+        </div>
+
         {/* Modal Header */}
-        <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-lg shadow-emerald-600/30 border border-emerald-400">
-              <Sparkles className="w-5 h-5 animate-pulse" />
-            </div>
-            <div>
-              <h3 className="font-black text-base sm:text-lg text-slate-900">إعدادات المساعد الصوتي</h3>
-              <p className="text-xs font-bold text-slate-500">تخصيص جودة النطق، أصوات الجيميني، والمظهر المرئي</p>
+        <div className="px-4 py-3 border-b border-slate-200/60 dark:border-slate-800 flex items-center justify-between bg-slate-50/80 dark:bg-slate-900/80 shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-all cursor-pointer shadow-xs text-xs font-black flex items-center gap-1.5 shrink-0 active:scale-95"
+              title="إغلاق والرجوع"
+            >
+              <ArrowRight className="w-4 h-4" />
+              <span>رجوع</span>
+            </button>
+            <div className="min-w-0 border-r border-slate-200 dark:border-slate-700 pr-2.5">
+              <h3 className="font-black text-xs sm:text-sm text-slate-900 dark:text-white truncate">إعدادات المساعد</h3>
+              <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 truncate">محرك الذكاء الاصطناعي، نطق التنبيهات، والواجهة</p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer border border-slate-200"
+            className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer border border-slate-200 dark:border-slate-700 text-xs shrink-0"
+            title="إغلاق الإعدادات والعودة"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
 
@@ -312,45 +270,371 @@ export const VoiceAssistantSettingsModal: React.FC<VoiceAssistantSettingsModalPr
         <div className="p-4 sm:p-6 overflow-y-auto space-y-6 flex-1 text-slate-800">
 
           {/* SECTION 0.5: Welcome Message */}
-          <div className="space-y-3 bg-gradient-to-br from-sky-50 to-slate-50/40 p-4 rounded-2xl border border-sky-100/80 shadow-2xs">
-            <h4 className="font-black text-xs sm:text-sm text-slate-900 flex items-center justify-between border-b border-sky-100/60 pb-2">
-              <span className="flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 text-sky-500 fill-sky-400" />
-                <span>الرسالة الترحيبية للمساعد</span>
-              </span>
+          <div className="space-y-2 bg-gradient-to-br from-sky-50 to-slate-50/40 p-3.5 rounded-2xl border border-sky-100/80 shadow-2xs">
+            <h4 className="font-black text-xs text-slate-900 flex items-center gap-2 border-b border-sky-100/60 pb-1.5">
+              <MessageSquare className="w-4 h-4 text-sky-500 fill-sky-400" />
+              <span>الرسالة الترحيبية للمساعد</span>
             </h4>
-            <div className="pt-1">
+            <div className="pt-0.5">
               <textarea
                 value={settings.welcomeMessage || ''}
                 onChange={(e) => setSettings({ ...settings, welcomeMessage: e.target.value })}
                 placeholder="أهلاً بك، أنا جاهز لتنفيذ الأوامر."
-                className="w-full text-right p-3 rounded-xl border border-slate-300 focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none text-xs sm:text-sm font-bold min-h-[80px]"
+                className="w-full text-right p-2.5 rounded-xl border border-slate-300 focus:border-sky-500 outline-none text-xs font-bold min-h-[60px]"
                 dir="rtl"
               />
-              <p className="text-[10px] text-slate-500 font-bold mt-1.5">
-                هذه هي الرسالة التي ينطقها المساعد فور تفعيله.
-              </p>
             </div>
           </div>
           
           {/* SECTION 0.75: Quick Prompts */}
-          <div className="space-y-3 bg-gradient-to-br from-indigo-50 to-slate-50/40 p-4 rounded-2xl border border-indigo-100/80 shadow-2xs">
-            <h4 className="font-black text-xs sm:text-sm text-slate-900 flex items-center justify-between border-b border-indigo-100/60 pb-2">
-              <span className="flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 text-indigo-500 fill-indigo-400" />
-                <span>النصوص الافتراضية الجاهزة (الأزرار السريعة)</span>
-              </span>
+          <div className="space-y-2 bg-gradient-to-br from-indigo-50 to-slate-50/40 p-3.5 rounded-2xl border border-indigo-100/80 shadow-2xs">
+            <h4 className="font-black text-xs text-slate-900 flex items-center gap-2 border-b border-indigo-100/60 pb-1.5">
+              <MessageSquare className="w-4 h-4 text-indigo-500 fill-indigo-400" />
+              <span>الأزرار والنصوص السريعة</span>
             </h4>
-            <div className="pt-1">
+            <div className="pt-0.5">
               <textarea
                 value={(settings.quickPrompts || []).join('\n')}
                 onChange={(e) => setSettings({ ...settings, quickPrompts: e.target.value.split('\n') })}
                 placeholder="ملخص اليوم\nكم الدخل؟\nالمهام الجاهزة"
-                className="w-full text-right p-3 rounded-xl border border-slate-300 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none text-xs sm:text-sm font-bold min-h-[100px]"
+                className="w-full text-right p-2.5 rounded-xl border border-slate-300 focus:border-indigo-500 outline-none text-xs font-bold min-h-[80px]"
                 dir="rtl"
               />
-              <p className="text-[10px] text-slate-500 font-bold mt-1.5">
-                أدخل كل نص في سطر جديد. ستظهر هذه النصوص كأزرار جاهزة للضغط المباشر.
+            </div>
+          </div>
+
+          {/* SECTION: Floating Assistant & App Interface Icons */}
+          <div className="space-y-3 bg-gradient-to-br from-purple-50/80 via-indigo-50/60 to-slate-50 p-3.5 rounded-2xl border border-purple-200/80 shadow-2xs">
+            <div className="flex items-center justify-between border-b border-purple-200/60 pb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-xl bg-purple-600 text-white flex items-center justify-center shadow-xs">
+                  <Smartphone className="w-3.5 h-3.5" />
+                </div>
+                <h4 className="font-black text-xs text-slate-900">
+                  أيقونات المساعد والواجهة
+                </h4>
+              </div>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 font-extrabold border border-purple-200">
+                أندرويد 13
+              </span>
+            </div>
+
+            {/* Toggle 0: Main Assistant Button in Application */}
+            <div className="p-3 rounded-xl bg-white/90 border border-purple-100 space-y-2 shadow-2xs">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-indigo-100 text-indigo-700 shrink-0">
+                    <Sparkles className="w-3.5 h-3.5" />
+                  </div>
+                  <h5 className="font-black text-xs text-slate-900">
+                    أيقونة المساعد الرئيسي داخل التطبيق
+                  </h5>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSettings({ ...settings, mainAssistantButtonEnabled: settings.mainAssistantButtonEnabled === false ? true : false })}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none self-center",
+                    settings.mainAssistantButtonEnabled !== false ? "bg-indigo-600" : "bg-slate-300"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out",
+                      settings.mainAssistantButtonEnabled !== false ? "translate-x-0" : "-translate-x-5"
+                    )}
+                  />
+                </button>
+              </div>
+
+              {settings.mainAssistantButtonEnabled !== false && (
+                <div className="pt-1.5 border-t border-slate-100">
+                  <select
+                    value={settings.mainAssistantPosition || 'bottom-right'}
+                    onChange={(e) => setSettings({ ...settings, mainAssistantPosition: e.target.value as any })}
+                    className="w-full p-2 text-xs bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-800 outline-none"
+                  >
+                    <option value="bottom-right">أسفل الشاشة جهة اليمين</option>
+                    <option value="bottom-left">أسفل الشاشة جهة اليسار</option>
+                    <option value="top-right">أعلى الشاشة جهة اليمين</option>
+                    <option value="top-left">أعلى الشاشة جهة اليسار</option>
+                  </select>
+                </div>
+              )}
+            </div>
+
+            {/* Toggle 1: Floating Assistant on Exit */}
+            <div className="p-3 rounded-xl bg-white/90 border border-purple-100 space-y-2 shadow-2xs">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-purple-100 text-purple-700 shrink-0">
+                    <Layers className="w-3.5 h-3.5" />
+                  </div>
+                  <h5 className="font-black text-xs text-slate-900">
+                    الأيقونة العائمة عند الخروج
+                  </h5>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSettings({ ...settings, floatingAssistantOnExit: !settings.floatingAssistantOnExit })}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none self-center",
+                    settings.floatingAssistantOnExit ? "bg-purple-600" : "bg-slate-300"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out",
+                      settings.floatingAssistantOnExit ? "translate-x-0" : "-translate-x-5"
+                    )}
+                  />
+                </button>
+              </div>
+
+              {settings.floatingAssistantOnExit && (
+                <div className="pt-1.5 border-t border-purple-100">
+                  <select
+                    value={settings.floatingExitAssistantPosition || 'bottom-right'}
+                    onChange={(e) => setSettings({ ...settings, floatingExitAssistantPosition: e.target.value as any })}
+                    className="w-full p-2 text-xs bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-800 outline-none"
+                  >
+                    <option value="bottom-right">أسفل الشاشة جهة اليمين</option>
+                    <option value="bottom-left">أسفل الشاشة جهة اليسار</option>
+                    <option value="top-right">أعلى الشاشة جهة اليمين</option>
+                    <option value="top-left">أعلى الشاشة جهة اليسار</option>
+                  </select>
+                </div>
+              )}
+            </div>
+
+            {/* SECTION: Gemini AI Assistant Engine */}
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900 to-indigo-950 text-white space-y-3.5 shadow-md">
+              <div className="flex items-center gap-2.5 border-b border-slate-700/80 pb-2">
+                <div className="p-2 bg-emerald-500 text-white rounded-xl shadow-xs shrink-0">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-black text-xs sm:text-sm text-white">
+                    محرك الذكاء الاصطناعي (Gemini AI)
+                  </h4>
+                  <p className="text-[10.5px] text-emerald-300 font-bold">
+                    أعلى مستويات السرعة والدقة في استخراج البيانات وتنفيذ وتعديل كافة الأوامر
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-1">
+                <label className="text-[11px] font-black text-slate-200 block">
+                  مفتاح Gemini API للتفاعل الفوري المستقل (على أندرويد APK والمُتصفح):
+                </label>
+                <input
+                  type="password"
+                  placeholder="أدخل مفتاح Gemini API هنا (مثال: AIzaSy...)"
+                  value={settings.geminiApiKey || ''}
+                  onChange={(e) => setSettings({ ...settings, geminiApiKey: e.target.value })}
+                  className="w-full text-left font-mono p-2.5 rounded-xl border border-slate-700 focus:border-emerald-500 outline-none text-xs bg-slate-800 text-white"
+                  dir="ltr"
+                />
+              </div>
+            </div>
+
+            {/* Toggle: Mute Voice Reading for Notifications */}
+            <div className="p-3.5 rounded-xl bg-white/90 border border-amber-200/80 space-y-2 shadow-2xs">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <div className="p-2 rounded-xl bg-amber-100 text-amber-800 shrink-0 mt-0.5">
+                    <VolumeX className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h5 className="font-black text-xs sm:text-sm text-slate-900">
+                      إسكات قراءة الإشعارات بالصوت
+                    </h5>
+                    <p className="text-[11px] text-slate-600 font-semibold mt-0.5 leading-relaxed">
+                      عند تفعيل هذا الخيار، يتم كتم قراءة تذكيرات المهام والتنبيهات بالصوت تلقائياً والاعتماد على التنبيه المرئي مع إمكانية إسكات الرنين يدوياً دون قراءة نص الإشعار.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSettings({ ...settings, muteNotificationVoiceSpeech: !settings.muteNotificationVoiceSpeech })}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none self-center",
+                    settings.muteNotificationVoiceSpeech ? "bg-amber-600" : "bg-slate-300"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out",
+                      settings.muteNotificationVoiceSpeech ? "translate-x-0" : "-translate-x-5"
+                    )}
+                  />
+                </button>
+              </div>
+            </div>
+
+            {/* Toggle 2: First-click direct chat interaction */}
+            <div className="p-3.5 rounded-xl bg-white/90 border border-purple-100 space-y-2 shadow-2xs">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <div className="p-2 rounded-xl bg-sky-100 text-sky-700 shrink-0 mt-0.5">
+                    <MousePointerClick className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h5 className="font-black text-xs sm:text-sm text-slate-900">
+                      التفاعل بأول نقرة وفتح نافذة الدردشة مباشرة فقط
+                    </h5>
+                    <p className="text-[11px] text-slate-600 font-semibold mt-0.5 leading-relaxed">
+                      عند النقر على أيقونة المساعد العائمة، يتم التفاعل فوراً من أول نقرة وفتح نافذة الدردشة المباشرة فقط بدون فك ربط أو خطوات إضافية.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSettings({ ...settings, directChatFirstClick: !settings.directChatFirstClick })}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none self-center",
+                    settings.directChatFirstClick ? "bg-sky-600" : "bg-slate-300"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out",
+                      settings.directChatFirstClick ? "translate-x-0" : "-translate-x-5"
+                    )}
+                  />
+                </button>
+              </div>
+            </div>
+
+            {/* Toggle 3: Show small app transition icon at the bottom of the chat window */}
+            <div className="p-3.5 rounded-xl bg-white/90 border border-purple-100 space-y-2 shadow-2xs">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <div className="p-2 rounded-xl bg-emerald-100 text-emerald-700 shrink-0 mt-0.5">
+                    <LayoutDashboard className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h5 className="font-black text-xs sm:text-sm text-slate-900">
+                      إظهار أيقونة صغيرة أسفل النافذة للانتقال للتطبيق
+                    </h5>
+                    <p className="text-[11px] text-slate-600 font-semibold mt-0.5 leading-relaxed">
+                      عرض زر وأيقونة مصغرة أنيقة أسفل نافذة الدردشة المباشرة للرجوع أو الانتقال لواجهة التطبيق الرئيسية بكل سهولة.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSettings({ ...settings, showAppTransitionIcon: !settings.showAppTransitionIcon })}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none self-center",
+                    settings.showAppTransitionIcon ? "bg-emerald-600" : "bg-slate-300"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out",
+                      settings.showAppTransitionIcon ? "translate-x-0" : "-translate-x-5"
+                    )}
+                  />
+                </button>
+              </div>
+
+              {settings.showAppTransitionIcon && (
+                <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold text-slate-500">
+                  <span>معاينة الزر في أسفل الدردشة:</span>
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10.5px]">
+                    <LayoutDashboard className="w-3 h-3 text-emerald-600" />
+                    <span>الانتقال للتطبيق</span>
+                    <ExternalLink className="w-2.5 h-2.5 opacity-70" />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Toggle 4: Show/Hide Direct Chat Notification */}
+            <div className="p-3.5 rounded-xl bg-white/90 border border-purple-100 space-y-2 shadow-2xs">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <div className="p-2 rounded-xl bg-blue-100 text-blue-700 shrink-0 mt-0.5">
+                    <Bell className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h5 className="font-black text-xs sm:text-sm text-slate-900">
+                      إظهار إشعار "انقر لفتح نافذة الدردشة الصوتية المباشرة"
+                    </h5>
+                    <p className="text-[11px] text-slate-600 font-semibold mt-0.5 leading-relaxed">
+                      التحكم في ظهور أو إخفاء الإشعار المستمر "انقر لفتح نافذة الدردشة الصوتية المباشرة فوراً" في شريط إشعارات الهاتف عند مغادرة التطبيق إلى الخلفية.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSettings({ ...settings, showDirectChatNotification: settings.showDirectChatNotification === false ? true : false })}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none self-center",
+                    settings.showDirectChatNotification !== false ? "bg-blue-600" : "bg-slate-300"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out",
+                      settings.showDirectChatNotification !== false ? "translate-x-0" : "-translate-x-5"
+                    )}
+                  />
+                </button>
+              </div>
+            </div>
+
+            {/* Toggle 5: Show/Hide Assistant Icons in App Interface */}
+            <div className="p-3.5 rounded-xl bg-white/90 border border-purple-100 space-y-2 shadow-2xs">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <div className="p-2 rounded-xl bg-purple-100 text-purple-700 shrink-0 mt-0.5">
+                    <Sparkles className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h5 className="font-black text-xs sm:text-sm text-slate-900">
+                      إظهار أيقونة المساعد في واجهة التطبيق
+                    </h5>
+                    <p className="text-[11px] text-slate-600 font-semibold mt-0.5 leading-relaxed">
+                      التحكم في إظهار أو إخفاء أيقونة المساعد الصوتي من داخل واجهة التطبيق الرئيسية، مع استمرار ظهورها كأيقونة عائمة حرة على أطراف الشاشة عند الخروج من التطبيق.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSettings({ ...settings, showAppAssistantIcons: settings.showAppAssistantIcons === false ? true : false })}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none self-center",
+                    settings.showAppAssistantIcons !== false ? "bg-purple-600" : "bg-slate-300"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out",
+                      settings.showAppAssistantIcons !== false ? "translate-x-0" : "-translate-x-5"
+                    )}
+                  />
+                </button>
+              </div>
+            </div>
+
+            {/* Note 20 Ultra Android 13 permission guide */}
+            <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-xl space-y-1 text-amber-950">
+              <div className="flex items-center gap-1.5 text-xs font-black text-amber-900">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span>إرشاد تشغيل الأيقونة العائمة على أندرويد 13 (نوت 20 الترا):</span>
+              </div>
+              <p className="text-[10.5px] text-amber-800 leading-relaxed font-semibold">
+                لكي تطفو أيقونة المساعد فوق شاشة الهاتف الرئيسية وبقية التطبيقات في أندرويد 13، توجه في هاتفك إلى: 
+                <span className="font-black text-slate-900"> الضبط ⚙️ ⇦ التطبيقات ⇦ تطبيق الفيصلي ⇦ تفعيل خيار (الظهور في الأعلى / Display over other apps)</span>.
               </p>
             </div>
           </div>
@@ -474,13 +758,25 @@ export const VoiceAssistantSettingsModal: React.FC<VoiceAssistantSettingsModalPr
                 <span className="text-[10.5px] font-bold text-slate-500">تجربة الإنذار القارئ للتنبيهات:</span>
                 <button
                   type="button"
-                  onClick={() => {
-                    speakImportantNotification('تنبيه صيانة عاجل', 'موعد صيانة جهاز سامسونج جالاكسي للعميل محمد الفيصل', { force: true });
+                  disabled={isTestingNotification}
+                  onClick={async () => {
+                    try {
+                      setIsTestingNotification(true);
+                      saveVoiceSettings(settings);
+                      await speakImportantNotification('تنبيه صيانة عاجل', 'موعد صيانة جهاز سامسونج جالاكسي للعميل محمد الفيصل', { force: true });
+                    } catch (e) {
+                      console.warn('Notification test error:', e);
+                    } finally {
+                      setTimeout(() => setIsTestingNotification(false), 2000);
+                    }
                   }}
-                  className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                  className={cn(
+                    "px-3 py-1.5 rounded-xl text-white text-xs font-black flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer",
+                    isTestingNotification ? "bg-amber-700 animate-pulse" : "bg-amber-600 hover:bg-amber-700"
+                  )}
                 >
                   <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>تجربة قراءة التنبيه صوتياً 🔊</span>
+                  <span>{isTestingNotification ? 'جاري القراءة...' : 'تجربة قراءة التنبيه صوتياً 🔊'}</span>
                 </button>
               </div>
             </div>
@@ -506,115 +802,139 @@ export const VoiceAssistantSettingsModal: React.FC<VoiceAssistantSettingsModalPr
               </button>
             </div>
 
-            {/* Voice Engine Provider Selection Cards */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-black text-slate-800 flex items-center gap-1.5">
-                  <Cpu className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>محرك ومصدر صوت المساعد (مدعوم على نوت 20 ألترا وأندرويد)</span>
+            {/* Phone Default Engine & Voice Gender Selection */}
+            <div className="space-y-3">
+              {/* System Default Engine Notice */}
+              <div className="p-3 bg-emerald-50/80 border border-emerald-200/90 rounded-2xl flex items-start gap-3 shadow-2xs">
+                <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+                  <Smartphone className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-1">
+                    <h5 className="font-black text-xs text-emerald-950">محرك الصوت والتعرف: افتراضي الهاتف ونظام أندرويد (تلقائي)</h5>
+                    <span className="text-[9.5px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 shrink-0">
+                      افتراضي الهاتف
+                    </span>
+                  </div>
+                  <p className="text-[10.5px] font-bold text-emerald-800/90 leading-relaxed mt-1">
+                    يعتمد المساعد كلياً على محرك الهاتف الافتراضي للتعرف على الصوت (تحويل الكلام لنص) ونظام أندرويد 13 المدمج (تحويل النص لصوت) دون أي محركات خارجية أو استهلاك للبيانات، مع تحسين النطق العربي ليكون نقياً وطبيعياً وبدون حركات نطق.
+                  </p>
+                </div>
+              </div>
+
+              {/* Voice Gender Selection (Male / Female / System Default) */}
+              <div>
+                <label className="text-xs font-black text-slate-800 flex items-center justify-between mb-2">
+                  <span className="flex items-center gap-1.5">
+                    <Volume2 className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>نوع ونبرة صوت المساعد</span>
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-bold">
+                    نطق عربي فصيح بدون حركات
+                  </span>
                 </label>
-                <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-extrabold border border-emerald-200">
-                  متوافق مع أندرويد 13
-                </span>
-              </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {[
-                  {
-                    id: 'samsung_voice',
-                    title: 'Samsung Voice',
-                    subtitle: 'صوت سامسونج العربي الأصلي',
-                    badge: 'نوت 20 ألترا',
-                    icon: '📱'
-                  },
-                  {
-                    id: 'samsung_tts',
-                    title: 'Samsung TTS',
-                    subtitle: 'محرك نطق سامسونج الافتراضي',
-                    badge: 'Samsung Engine',
-                    icon: '🔊'
-                  },
-                  {
-                    id: 'google_voice',
-                    title: 'Google Voice',
-                    subtitle: 'صوت جوجل الصوتي الذكي',
-                    badge: 'Google AI',
-                    icon: '🌐'
-                  },
-                  {
-                    id: 'google_tts',
-                    title: 'Google Text to Voice',
-                    subtitle: 'محرك جوجل لتحويل النص لكلام',
-                    badge: 'Google TTS',
-                    icon: '🎙️'
-                  },
-                  {
-                    id: 'gemini_stream',
-                    title: 'بث نقي فصيح (Universal)',
-                    subtitle: 'نطق فائق النقاء أونلاين وأوفلاين',
-                    badge: 'موصى به',
-                    icon: '✨'
-                  },
-                  {
-                    id: 'system_default',
-                    title: 'افتراضي النظام',
-                    subtitle: 'محرك الصوت النشط بالنظام',
-                    badge: 'Android 13',
-                    icon: '⚙️'
-                  },
-                ].map((engine) => {
-                  const isSelected = (settings.voiceEngineProvider || 'auto') === engine.id || (settings.voiceEngineProvider === 'auto' && engine.id === 'gemini_stream');
-                  return (
-                    <button
-                      key={engine.id}
-                      type="button"
-                      onClick={() => setSettings({ ...settings, voiceEngineProvider: engine.id as any })}
-                      className={cn(
-                        "p-2.5 rounded-xl border text-right transition-all cursor-pointer relative flex flex-col justify-between gap-1 active:scale-98",
-                        isSelected
-                          ? "bg-emerald-50/80 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs"
-                          : "bg-slate-50 border-slate-200 hover:border-slate-300 opacity-90 hover:opacity-100"
-                      )}
-                    >
-                      <div className="flex items-center justify-between gap-1 w-full">
-                        <span className="text-base">{engine.icon}</span>
-                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-white border border-slate-200 text-slate-600">
-                          {engine.badge}
-                        </span>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  {/* Male Voice */}
+                  <button
+                    type="button"
+                    onClick={() => setSettings({ 
+                      ...settings, 
+                      voiceGender: 'male',
+                      pitch: 0.82,
+                      rate: 0.94
+                    })}
+                    className={cn(
+                      "p-3 rounded-2xl border-2 text-right transition-all cursor-pointer relative flex flex-col justify-between gap-2 active:scale-98",
+                      (settings.voiceGender || 'male') === 'male'
+                        ? "bg-emerald-50/90 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs"
+                        : "bg-slate-50 border-slate-200 hover:border-slate-300 opacity-90 hover:opacity-100"
+                    )}
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-2xl">👨‍💼</span>
+                      <span className="text-[9.5px] font-black px-2 py-0.5 rounded bg-white border border-slate-200 text-emerald-700">
+                        موصى به
+                      </span>
+                    </div>
+                    <div>
+                      <h5 className="font-black text-xs text-slate-950 leading-snug">صوت رجل (فصيح ووقور)</h5>
+                      <p className="text-[10px] font-bold text-slate-500 leading-tight mt-1">نبرة رجالية هادئة ورصينة، نطق عربي واضح ومباشر بدون حركات</p>
+                    </div>
+                    {(settings.voiceGender || 'male') === 'male' && (
+                      <div className="absolute top-2 left-2 w-4 h-4 bg-emerald-600 text-white rounded-full flex items-center justify-center">
+                        <Check className="w-2.5 h-2.5" />
                       </div>
-                      <div>
-                        <h5 className="font-black text-xs text-slate-900 leading-snug">{engine.title}</h5>
-                        <p className="text-[9.5px] font-bold text-slate-500 leading-tight mt-0.5">{engine.subtitle}</p>
-                      </div>
-                      {isSelected && (
-                        <div className="absolute top-2 left-2 w-4 h-4 bg-emerald-600 text-white rounded-full flex items-center justify-center">
-                          <Check className="w-2.5 h-2.5" />
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+                    )}
+                  </button>
 
-            {/* Voice Dropdown */}
-            <div>
-              <label className="block text-xs font-black text-slate-700 mb-1.5">اختيار الصوت الفرعي المحدد (اختياري)</label>
-              <select
-                value={settings.voiceName}
-                onChange={(e) => setSettings({ ...settings, voiceName: e.target.value })}
-                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:bg-white outline-none cursor-pointer"
-              >
-                <option value="">تحديد تلقائي للأمثل من المحرك المختار</option>
-                {availableVoices.map((v, idx) => (
-                  <option key={idx} value={v.name}>
-                    {v.name} ({v.lang}) {v.default ? '- الافتراضي' : ''}
-                  </option>
-                ))}
-              </select>
-              <p className="text-[10.5px] text-slate-400 font-bold mt-1">
-                في هاتف جالكسي نوت 20 ألترا، يتوفر محرك Samsung TTS و Google Speech Services المدمجين بنظام أندرويد 13.
-              </p>
+                  {/* Female / Current Voice */}
+                  <button
+                    type="button"
+                    onClick={() => setSettings({ 
+                      ...settings, 
+                      voiceGender: 'female',
+                      pitch: 1.05,
+                      rate: 0.98
+                    })}
+                    className={cn(
+                      "p-3 rounded-2xl border-2 text-right transition-all cursor-pointer relative flex flex-col justify-between gap-2 active:scale-98",
+                      settings.voiceGender === 'female'
+                        ? "bg-emerald-50/90 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs"
+                        : "bg-slate-50 border-slate-200 hover:border-slate-300 opacity-90 hover:opacity-100"
+                    )}
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-2xl">👩‍💼</span>
+                      <span className="text-[9.5px] font-black px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-600">
+                        الصوت الحالي
+                      </span>
+                    </div>
+                    <div>
+                      <h5 className="font-black text-xs text-slate-950 leading-snug">صوت امرأة (الحالي)</h5>
+                      <p className="text-[10px] font-bold text-slate-500 leading-tight mt-1">نبرة أنثوية نقية وواضحة، قراءة عربية دقيقة للأوامر والبيانات</p>
+                    </div>
+                    {settings.voiceGender === 'female' && (
+                      <div className="absolute top-2 left-2 w-4 h-4 bg-emerald-600 text-white rounded-full flex items-center justify-center">
+                        <Check className="w-2.5 h-2.5" />
+                      </div>
+                    )}
+                  </button>
+
+                  {/* System Phone Default */}
+                  <button
+                    type="button"
+                    onClick={() => setSettings({ 
+                      ...settings, 
+                      voiceGender: 'default',
+                      pitch: 0.95,
+                      rate: 0.95
+                    })}
+                    className={cn(
+                      "p-3 rounded-2xl border-2 text-right transition-all cursor-pointer relative flex flex-col justify-between gap-2 active:scale-98",
+                      settings.voiceGender === 'default'
+                        ? "bg-emerald-50/90 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs"
+                        : "bg-slate-50 border-slate-200 hover:border-slate-300 opacity-90 hover:opacity-100"
+                    )}
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-2xl">📱</span>
+                      <span className="text-[9.5px] font-black px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-600">
+                        نظام الجهاز
+                      </span>
+                    </div>
+                    <div>
+                      <h5 className="font-black text-xs text-slate-950 leading-snug">افتراضي الهاتف</h5>
+                      <p className="text-[10px] font-bold text-slate-500 leading-tight mt-1">مطابق تماماً للصوت المحدد في إعدادات اللغة وتحويل النص بنظام جهازك</p>
+                    </div>
+                    {settings.voiceGender === 'default' && (
+                      <div className="absolute top-2 left-2 w-4 h-4 bg-emerald-600 text-white rounded-full flex items-center justify-center">
+                        <Check className="w-2.5 h-2.5" />
+                      </div>
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* Sliders Grid: Volume, Rate, Pitch */}
@@ -676,10 +996,72 @@ export const VoiceAssistantSettingsModal: React.FC<VoiceAssistantSettingsModalPr
 
           {/* SECTION 2: Assistant Appearance & Themes */}
           <div className="space-y-4">
-            <h4 className="font-black text-xs sm:text-sm text-slate-900 flex items-center gap-2 border-b border-slate-100 pb-2">
-              <Palette className="w-4 h-4 text-sky-600" />
-              <span>مظهر ونمط نافذة المساعد الصوتي</span>
+            <h4 className="font-black text-xs sm:text-sm text-slate-900 flex items-center justify-between border-b border-slate-100 pb-2">
+              <div className="flex items-center gap-2">
+                <Palette className="w-4 h-4 text-sky-600" />
+                <span>مظهر ونمط نافذة المساعد الصوتي والتأثيرات</span>
+              </div>
+              <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                تطبيق فوري مباشر
+              </span>
             </h4>
+
+            {/* Live Interactive Preview Box */}
+            <div className={cn(
+              "p-3.5 rounded-2xl border transition-all duration-300 relative overflow-hidden flex items-center justify-between gap-3 shadow-sm",
+              settings.bgStyle === 'glass_dark' ? "bg-slate-950/95 border-slate-800 text-white" :
+              settings.bgStyle === 'glass_emerald' ? "bg-emerald-950/95 border-emerald-600/50 text-white" :
+              settings.bgStyle === 'solid_white' ? "bg-white border-slate-300 text-slate-900" :
+              settings.bgStyle === 'solid_slate' ? "bg-slate-900 border-slate-700 text-white" :
+              "bg-white/90 border-slate-200 text-slate-900"
+            )}>
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  "w-10 h-10 rounded-2xl flex items-center justify-center shadow-md relative transition-all duration-300",
+                  settings.effectColor === 'emerald' ? "bg-emerald-600 shadow-emerald-500/30 text-white" :
+                  settings.effectColor === 'sky' ? "bg-sky-600 shadow-sky-500/30 text-white" :
+                  settings.effectColor === 'amber' ? "bg-amber-500 shadow-amber-500/30 text-slate-950" :
+                  settings.effectColor === 'purple' ? "bg-purple-600 shadow-purple-500/30 text-white" :
+                  "bg-rose-600 shadow-rose-500/30 text-white"
+                )}>
+                  <Bot className="w-5 h-5" />
+                  <span className={cn(
+                    "absolute -top-1 -right-1 w-3 h-3 rounded-full animate-ping opacity-75",
+                    settings.effectColor === 'emerald' ? "bg-emerald-400" :
+                    settings.effectColor === 'sky' ? "bg-sky-400" :
+                    settings.effectColor === 'amber' ? "bg-amber-400" :
+                    settings.effectColor === 'purple' ? "bg-purple-400" :
+                    "bg-rose-400"
+                  )} />
+                </div>
+                <div>
+                  <span className="text-[10px] opacity-70 block font-bold">معاينة حية للمظهر المختار:</span>
+                  <p className={cn(
+                    "text-xs font-black transition-colors duration-300",
+                    settings.textColor === 'emerald' ? "text-emerald-500" :
+                    settings.textColor === 'sky' ? "text-sky-500" :
+                    settings.textColor === 'amber' ? "text-amber-500" :
+                    settings.textColor === 'light' ? "text-slate-100" :
+                    settings.textColor === 'dark' ? "text-slate-900" :
+                    ""
+                  )}>
+                    أهلاً بك! أنا جاهز لتنفيذ أوامرك فورياً
+                  </p>
+                </div>
+              </div>
+              <div className="shrink-0 flex items-center gap-1.5">
+                <span className={cn(
+                  "text-[10px] px-2 py-1 rounded-lg font-bold border",
+                  settings.effectColor === 'emerald' ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400" :
+                  settings.effectColor === 'sky' ? "bg-sky-500/15 border-sky-500/30 text-sky-400" :
+                  settings.effectColor === 'amber' ? "bg-amber-500/15 border-amber-500/30 text-amber-400" :
+                  settings.effectColor === 'purple' ? "bg-purple-500/15 border-purple-500/30 text-purple-400" :
+                  "bg-rose-500/15 border-rose-500/30 text-rose-400"
+                )}>
+                  هالة {settings.effectColor}
+                </span>
+              </div>
+            </div>
 
             {/* Background Style */}
             <div>
@@ -695,7 +1077,7 @@ export const VoiceAssistantSettingsModal: React.FC<VoiceAssistantSettingsModalPr
                   <button
                     key={bg.id}
                     type="button"
-                    onClick={() => setSettings({ ...settings, bgStyle: bg.id as any })}
+                    onClick={() => updateSettingImmediate('bgStyle', bg.id)}
                     className={cn(
                       "p-3 rounded-2xl border-2 text-right transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between h-18",
                       bg.preview,
@@ -704,7 +1086,7 @@ export const VoiceAssistantSettingsModal: React.FC<VoiceAssistantSettingsModalPr
                   >
                     <span className="text-xs font-black">{bg.label}</span>
                     {settings.bgStyle === bg.id && (
-                      <span className="absolute bottom-2 left-2 w-5 h-5 bg-emerald-600 text-white rounded-full flex items-center justify-center">
+                      <span className="absolute bottom-2 left-2 w-5 h-5 bg-emerald-600 text-white rounded-full flex items-center justify-center shadow-xs">
                         <Check className="w-3.5 h-3.5" />
                       </span>
                     )}
@@ -728,7 +1110,7 @@ export const VoiceAssistantSettingsModal: React.FC<VoiceAssistantSettingsModalPr
                   <button
                     key={tc.id}
                     type="button"
-                    onClick={() => setSettings({ ...settings, textColor: tc.id as any })}
+                    onClick={() => updateSettingImmediate('textColor', tc.id)}
                     className={cn(
                       "py-2 px-2.5 rounded-xl border text-center text-[11px] font-black transition-all cursor-pointer flex items-center justify-center gap-1",
                       tc.colorClass,
@@ -744,7 +1126,7 @@ export const VoiceAssistantSettingsModal: React.FC<VoiceAssistantSettingsModalPr
 
             {/* Visual Effect / Aura Color */}
             <div>
-              <label className="block text-xs font-black text-slate-700 mb-2">لون التناغم والتأثيرات المرئية (الهالة)</label>
+              <label className="block text-xs font-black text-slate-700 mb-2">لون التناغم والتأثيرات المرئية (الهالة وزر المساعد)</label>
               <div className="grid grid-cols-5 gap-2">
                 {[
                   { id: 'emerald', label: 'زمردي', bg: 'bg-emerald-500' },
@@ -756,10 +1138,10 @@ export const VoiceAssistantSettingsModal: React.FC<VoiceAssistantSettingsModalPr
                   <button
                     key={eff.id}
                     type="button"
-                    onClick={() => setSettings({ ...settings, effectColor: eff.id as any })}
+                    onClick={() => updateSettingImmediate('effectColor', eff.id)}
                     className={cn(
                       "py-2 px-1 rounded-xl border-2 transition-all cursor-pointer flex flex-col items-center justify-center gap-1 text-[10.5px] font-black text-slate-700",
-                      settings.effectColor === eff.id ? "border-slate-900 ring-2 ring-emerald-400 bg-slate-50" : "border-slate-200 hover:border-slate-300"
+                      settings.effectColor === eff.id ? "border-slate-900 ring-2 ring-emerald-400 bg-slate-50 scale-[1.02]" : "border-slate-200 hover:border-slate-300"
                     )}
                   >
                     <span className={cn("w-4 h-4 rounded-full shadow-xs", eff.bg)} />

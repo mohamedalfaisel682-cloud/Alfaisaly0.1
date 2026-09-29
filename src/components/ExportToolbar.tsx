@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Image as ImageIcon, Copy, Printer, Check, SlidersHorizontal, Settings2 } from 'lucide-react';
+import { FileText, Image as ImageIcon, Copy, Printer, Check, SlidersHorizontal, Settings2, Database } from 'lucide-react';
+import { toast } from 'react-hot-toast';
 import { exportElementAsJPG, exportElementAsPDF, copyFormattedText } from '../utils/exportUtils';
 import { openExportSettingsModal, getExportSettings, subscribeExportSettings } from '../utils/exportSettings';
 import { cn } from '../lib/utils';
@@ -10,6 +11,7 @@ export interface ExportToolbarProps {
   title: string;
   getTextToCopy?: () => string;
   getTextContent?: () => string;
+  getJsonData?: () => any;
   className?: string;
   size?: 'sm' | 'md' | 'xs';
   showPrint?: boolean;
@@ -24,6 +26,7 @@ export const ExportToolbar: React.FC<ExportToolbarProps> = ({
   title,
   getTextToCopy,
   getTextContent,
+  getJsonData,
   className,
   size = 'sm',
   showPrint = false,
@@ -34,6 +37,7 @@ export const ExportToolbar: React.FC<ExportToolbarProps> = ({
   const [copied, setCopied] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isExportingJpg, setIsExportingJpg] = useState(false);
+  const [isExportingJson, setIsExportingJson] = useState(false);
   const [currentFormatLabel, setCurrentFormatLabel] = useState('جوال');
 
   useEffect(() => {
@@ -79,6 +83,63 @@ export const ExportToolbar: React.FC<ExportToolbarProps> = ({
     setIsExportingJpg(false);
   };
 
+  const handleExportJSON = async () => {
+    setIsExportingJson(true);
+    try {
+      const dateStr = new Date().toISOString().split('T')[0];
+      const filename = `${effectivePrefix}_backup_${dateStr}.json`;
+      let dataToExport: any = null;
+
+      if (getJsonData) {
+        dataToExport = getJsonData();
+      } else {
+        // Collect real DB snapshot and document content
+        let dbSnapshot: any = {};
+        try {
+          const { db } = await import('../lib/db');
+          dbSnapshot = {
+            tasks: await db.tasks.limit(50).toArray(),
+            transactions: await db.transactions.limit(100).toArray(),
+            cashAccounts: await db.cashAccounts.toArray(),
+            customers: await db.customers.limit(50).toArray(),
+            tasksCount: await db.tasks.count(),
+            transactionsCount: await db.transactions.count()
+          };
+        } catch (err) {
+          console.warn('DB snapshot in export toolbar:', err);
+        }
+
+        dataToExport = {
+          app: 'نظام الفيصلي للصيانة والحسابات',
+          title,
+          exportedAt: new Date().toISOString(),
+          format: 'json_backup',
+          textContent: getEffectiveText ? getEffectiveText() : '',
+          backupData: dbSnapshot
+        };
+      }
+
+      const jsonStr = typeof dataToExport === 'string' ? dataToExport : JSON.stringify(dataToExport, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 1000);
+      toast.success(`تم التحميل المباشر لملف .json: ${filename}`);
+    } catch (e) {
+      console.error('Export JSON failed:', e);
+      toast.error('تعذر تحميل ملف JSON');
+    } finally {
+      setIsExportingJson(false);
+    }
+  };
+
   const btnClasses = cn(
     "flex items-center gap-1.5 font-bold rounded-xl transition-all cursor-pointer shadow-xs select-none active:scale-95 shrink-0",
     compact && size === 'xs' ? "w-7 h-7 sm:w-8 sm:h-8 p-0 flex items-center justify-center" :
@@ -100,6 +161,21 @@ export const ExportToolbar: React.FC<ExportToolbarProps> = ({
           <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
         </button>
       )}
+
+      {/* Direct JSON Download Button */}
+      <button
+        type="button"
+        onClick={handleExportJSON}
+        disabled={isExportingJson}
+        title="تحميل مباشر لملف النسخة الاحتياطية والبيانات (.json) إلى الهاتف"
+        className={cn(
+          btnClasses,
+          "bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300/80"
+        )}
+      >
+        <Database className={cn("w-3.5 h-3.5 text-amber-700", isExportingJson && "animate-spin")} />
+        {!compact && <span>.json</span>}
+      </button>
 
       {/* Export as PDF */}
       <button

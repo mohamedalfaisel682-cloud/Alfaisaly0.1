@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { safeParseFloat } from '../lib/arabicDigitsConverter';
 import { 
   Wallet, 
   Package, 
@@ -26,13 +27,15 @@ import {
   Sparkles,
   StickyNote,
   Edit3,
-  Trash2
+  Trash2,
+  BookmarkCheck
 } from 'lucide-react';
 import { db } from '../lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Currency, ExchangeRates, InventoryItem, Task, Transaction, CashAccount, DebtAccount, DebtPayment } from '../types';
 import { cn, formatAmount, getInUSD, convertCurrency, convertAndRound, isFinancialCenterOnlyTransaction } from '../lib/utils';
 import { ExportToolbar } from './ExportToolbar';
+import { VoiceInputButton } from './VoiceInputButton';
 import toast from 'react-hot-toast';
 
 export interface FinancialsManagerProps {
@@ -58,7 +61,16 @@ export const FinancialsManager: React.FC<FinancialsManagerProps> = ({
   onOpenNote,
   onAddAccountNote
 }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'debts'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'debts'>(() => {
+    return (localStorage.getItem('financials_active_tab_default') as any) || 'overview';
+  });
+  const [savedTabFeedback, setSavedTabFeedback] = useState(false);
+
+  const handleSaveTabDefault = () => {
+    localStorage.setItem('financials_active_tab_default', activeTab);
+    setSavedTabFeedback(true);
+    setTimeout(() => setSavedTabFeedback(false), 2200);
+  };
 
   // Live query for cash accounts and debt accounts
   const cashAccounts = useLiveQuery(() => db.cashAccounts.toArray()) || [];
@@ -552,14 +564,14 @@ export const FinancialsManager: React.FC<FinancialsManagerProps> = ({
 • 📦 قيمة بضاعة المخزن (سعر التكلفة): ${formatAmount(totalInventoryCostUSD, systemCurrency, exchangeRates)} ${systemCurrency} (${totalInventoryUnits} قطعة)
 • 🏷️ القيمة السوقية المتوقعة للمخزن (سعر البيع): ${formatAmount(totalInventorySellingUSD, systemCurrency, exchangeRates)} ${systemCurrency}
 • 💵 إجمالي النقدية المتوفرة (الخزائن والصناديق): ${formatAmount(totalCashUSD, systemCurrency, exchangeRates)} ${systemCurrency}
-• 👥 ديون ومستحقات على العملاء: ${formatAmount(customerDuesUSD, systemCurrency, exchangeRates)} ${systemCurrency}
+• 👥 المتبقي على العملاء (ما عليه): ${formatAmount(customerDuesUSD, systemCurrency, exchangeRates)} ${systemCurrency}
 💎 *إجمالي الأصول الكلية:* ${formatAmount(totalAssetsUSD, systemCurrency, exchangeRates)} ${systemCurrency}
 
 ━━━━━━━━━━━━━━━━━━━━
-💳 *الالتزامات والديون الرأسمالية (تمويل المخزن والأصول):*
-• 🔴 إجمالي الديون المستحقة: ${formatAmount(totalDebtsUSD, systemCurrency, exchangeRates)} ${systemCurrency}
-• 🟢 المسدد منها حتى الآن: ${formatAmount(totalPaidDebtsUSD, systemCurrency, exchangeRates)} ${systemCurrency}
-• ⚠️ المتبقي الواجب سداده: ${formatAmount(remainingDebtsUSD, systemCurrency, exchangeRates)} ${systemCurrency}
+💳 *الالتزامات والديون (ما عليه للغير):*
+• 🔴 إجمالي ما عليه (الديون): ${formatAmount(totalDebtsUSD, systemCurrency, exchangeRates)} ${systemCurrency}
+• 🟢 الواصل المسدد: ${formatAmount(totalPaidDebtsUSD, systemCurrency, exchangeRates)} ${systemCurrency}
+• ⚠️ المتبقي: ${formatAmount(remainingDebtsUSD, systemCurrency, exchangeRates)} ${systemCurrency}
 
 ━━━━━━━━━━━━━━━━━━━━
 👑 *صافي رأس المال وحقوق الملكية (Net Worth):*
@@ -648,6 +660,22 @@ export const FinancialsManager: React.FC<FinancialsManagerProps> = ({
               <span className="w-2 h-2 rounded-full bg-red-500" />
             )}
           </button>
+
+          {/* Save as default tab */}
+          <button
+            type="button"
+            onClick={handleSaveTabDefault}
+            className={cn(
+              "shrink-0 flex items-center gap-1.5 py-2 px-3 rounded-xl text-xs font-black transition-all cursor-pointer select-none border",
+              savedTabFeedback
+                ? "bg-emerald-600 text-white border-emerald-700 shadow-xs scale-105"
+                : "bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200/80"
+            )}
+            title="حفظ هذا القسم كافتراضي عند فتح صفحة المركز المالي"
+          >
+            <BookmarkCheck className="w-4 h-4 text-amber-700" />
+            <span>{savedTabFeedback ? '✓ تم الحفظ كافتراضي' : 'حفظ كافتراضي'}</span>
+          </button>
         </div>
 
         {/* Action Buttons based on tab */}
@@ -713,80 +741,83 @@ export const FinancialsManager: React.FC<FinancialsManagerProps> = ({
             />
           </div>
 
-          {/* Core Metrics Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-            {/* 1. Inventory Valuation (الأصل المخزني) */}
-            <div className="bg-white p-4 rounded-2xl border border-orange-200/80 shadow-xs space-y-2 relative overflow-hidden">
+          {/* Core Financial Center Metrics Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+            {/* 1. الخزنة والسيولة النقدية */}
+            <div className="bg-gradient-to-br from-sky-50 via-blue-50/50 to-white p-4 rounded-2xl border-2 border-sky-300 shadow-sm space-y-2 relative overflow-hidden">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-orange-700 bg-orange-50 px-2.5 py-1 rounded-lg border border-orange-100 flex items-center gap-1.5">
-                  <Package className="w-3.5 h-3.5 text-orange-600" />
-                  أصل بضاعة المخزن
+                <span className="text-xs font-black text-sky-900 bg-sky-100 px-2.5 py-1 rounded-xl border border-sky-200 flex items-center gap-1.5">
+                  <Landmark className="w-4 h-4 text-sky-600 shrink-0" />
+                  الخزنة والسيولة النقدية
                 </span>
-                <span className="text-[11px] font-bold text-slate-400">{inventory.length} صنف ({totalInventoryUnits} قطعة)</span>
+                <span className="text-[11px] font-black text-sky-700 bg-sky-100/60 px-2 py-0.5 rounded-lg border border-sky-200">{cashAccounts.length} خزينة وصندوق</span>
               </div>
-              <p className="text-2xl font-black text-slate-800 tracking-tight">
-                {formatAmount(totalInventoryCostUSD, systemCurrency, exchangeRates)} <span className="text-xs font-bold text-slate-500">{systemCurrency}</span>
+              <p className="text-2xl font-black text-sky-900 tracking-tight">
+                {formatAmount(totalCashUSD, systemCurrency, exchangeRates)} <span className="text-xs font-bold text-sky-600">{systemCurrency}</span>
               </p>
-              <div className="text-[11px] font-bold text-slate-500 flex justify-between border-t border-slate-100 pt-1.5">
-                <span>القيمة بالبيع: {formatAmount(totalInventorySellingUSD, systemCurrency, exchangeRates)} {systemCurrency}</span>
-                <span className="text-emerald-600">+{formatAmount(potentialInventoryProfitUSD, systemCurrency, exchangeRates)} ربح متوقع</span>
+              <div className="text-[11px] font-bold text-sky-800 flex justify-between border-t border-sky-200/80 pt-1.5">
+                <span>المستحق على العملاء:</span>
+                <span className="text-emerald-700 font-extrabold">{formatAmount(customerDuesUSD, systemCurrency, exchangeRates)} {systemCurrency}</span>
               </div>
             </div>
 
-            {/* 2. Liquid Cash (السيولة النقدية) */}
-            <div className="bg-white p-4 rounded-2xl border border-emerald-200/80 shadow-xs space-y-2">
+            {/* 2. صندوق رأس المال الخاص بالمخزون والأصناف */}
+            <div className="bg-gradient-to-br from-purple-50 via-indigo-50/50 to-white p-4 rounded-2xl border-2 border-purple-300 shadow-sm space-y-2 relative overflow-hidden">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100 flex items-center gap-1.5">
-                  <Landmark className="w-3.5 h-3.5 text-emerald-600" />
-                  النقدية والخزائن
+                <span className="text-xs font-black text-purple-900 bg-purple-100 px-2.5 py-1 rounded-lg border border-purple-200 flex items-center gap-1.5">
+                  <Package className="w-4 h-4 text-purple-600 shrink-0" />
+                  صندوق رأس مال المخزون والأصناف
                 </span>
-                <span className="text-[11px] font-bold text-slate-400">{cashAccounts.length} حسابات</span>
+                <span className="text-[11px] font-black text-purple-700 bg-purple-100/60 px-2 py-0.5 rounded-lg border border-purple-200">{inventory.length} صنف ({totalInventoryUnits} قطعة)</span>
               </div>
-              <p className="text-2xl font-black text-emerald-700 tracking-tight">
-                {formatAmount(totalCashUSD, systemCurrency, exchangeRates)} <span className="text-xs font-bold text-emerald-600">{systemCurrency}</span>
+              <p className="text-2xl font-black text-purple-950 tracking-tight">
+                {formatAmount(totalInventoryCostUSD, systemCurrency, exchangeRates)} <span className="text-xs font-bold text-purple-600">{systemCurrency}</span>
               </p>
-              <div className="text-[11px] font-bold text-slate-500 flex justify-between border-t border-slate-100 pt-1.5">
-                <span>مستحقات على العملاء:</span>
-                <span className="text-sky-700 font-bold">{formatAmount(customerDuesUSD, systemCurrency, exchangeRates)} {systemCurrency}</span>
+              <div className="text-[11px] font-bold text-purple-900 flex justify-between border-t border-purple-200/80 pt-1.5">
+                <span>قيمة البيع: {formatAmount(totalInventorySellingUSD, systemCurrency, exchangeRates)}</span>
+                <span className="text-emerald-700 font-black">+{formatAmount(potentialInventoryProfitUSD, systemCurrency, exchangeRates)} ربح</span>
               </div>
             </div>
 
-            {/* 3. Debt Liabilities (الديون والالتزامات) */}
-            <div className="bg-white p-4 rounded-2xl border border-red-200/80 shadow-xs space-y-2">
+            {/* 3. صندوق الديون والالتزامات الواجب سدادها */}
+            <div className="bg-gradient-to-br from-rose-50 via-red-50/50 to-white p-4 rounded-2xl border-2 border-rose-300 shadow-sm space-y-2 relative overflow-hidden">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-red-700 bg-red-50 px-2.5 py-1 rounded-lg border border-red-100 flex items-center gap-1.5">
-                  <CreditCard className="w-3.5 h-3.5 text-red-600" />
-                  ديون تمويل الأصول والمخزن
+                <span className="text-xs font-black text-rose-900 bg-rose-100 px-2.5 py-1 rounded-lg border border-rose-200 flex items-center gap-1.5">
+                  <CreditCard className="w-4 h-4 text-rose-600 shrink-0" />
+                  صندوق الديون التي يجب سدادها
                 </span>
-                <span className="text-[11px] font-bold text-red-500">{debtAccounts.filter(d => d.status === 'active').length} نشطة</span>
+                <span className="text-[11px] font-black text-rose-700 bg-rose-100/60 px-2 py-0.5 rounded-lg border border-rose-200">{debtAccounts.filter(d => d.status === 'active').length} نشطة</span>
               </div>
-              <p className="text-2xl font-black text-red-600 tracking-tight">
-                {formatAmount(remainingDebtsUSD, systemCurrency, exchangeRates)} <span className="text-xs font-bold text-red-500">{systemCurrency}</span>
+              <p className="text-2xl font-black text-rose-700 tracking-tight">
+                {formatAmount(remainingDebtsUSD, systemCurrency, exchangeRates)} <span className="text-xs font-bold text-rose-500">{systemCurrency}</span>
               </p>
-              <div className="text-[11px] font-bold text-slate-500 flex justify-between border-t border-slate-100 pt-1.5">
-                <span>تم سداد: {formatAmount(totalPaidDebtsUSD, systemCurrency, exchangeRates)} {systemCurrency}</span>
-                <span className="text-slate-400">من أصل {formatAmount(totalDebtsUSD, systemCurrency, exchangeRates)}</span>
+              <div className="text-[11px] font-bold text-rose-800 flex justify-between border-t border-rose-200/80 pt-1.5">
+                <span>المبلغ الواصل: {formatAmount(totalPaidDebtsUSD, systemCurrency, exchangeRates)}</span>
+                <span className="text-slate-500 font-extrabold">الإجمالي: {formatAmount(totalDebtsUSD, systemCurrency, exchangeRates)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Banner: Net Capital & Net Worth */}
+          <div className="bg-[#4ed531] text-slate-900 p-4 rounded-2xl border border-emerald-700/80 shadow-md flex flex-wrap items-center justify-between gap-3" style={{ backgroundColor: '#4ed531' }}>
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-emerald-500 text-white rounded-xl shadow-xs shrink-0">
+                <Sparkles className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <h4 className="font-black text-sm text-white">
+                  مؤشر صافي المركز المالي ورأس المال العام (Net Capital)
+                </h4>
+                <p className="text-[11px] text-emerald-200 font-bold">
+                  حاصل الخزنة + رأس مال المخزون - صندوق الديون الملتزم بها
+                </p>
               </div>
             </div>
 
-            {/* 4. Net Worth / Net Capital (صافي رأس المال) */}
-            <div className="bg-gradient-to-br from-sky-50 via-blue-50 to-indigo-50/50 text-slate-900 border border-sky-200 p-4 rounded-2xl shadow-xs space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-amber-800 bg-amber-100/80 px-2.5 py-1 rounded-lg border border-amber-300 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-700" />
-                  صافي رأس المال وحقوق الملكية
-                </span>
-                <span className="text-[11px] font-extrabold text-sky-800 bg-sky-100 px-2 py-0.5 rounded-md border border-sky-200">Net Worth</span>
-              </div>
-              <p className="text-2xl font-black text-slate-900 tracking-tight">
-                {formatAmount(netCapitalUSD, systemCurrency, exchangeRates)} <span className="text-xs font-bold text-emerald-700">{systemCurrency}</span>
+            <div className="text-right">
+              <p className="text-2xl font-black text-emerald-300 tracking-tight">
+                {formatAmount(netCapitalUSD, systemCurrency, exchangeRates)} <span className="text-xs font-bold text-white">{systemCurrency}</span>
               </p>
-              <div className="text-[11px] font-bold text-slate-700 border-t border-sky-200/80 pt-1.5 flex justify-between items-center">
-                <span>إجمالي الأصول: <strong className="text-slate-900">{formatAmount(totalAssetsUSD, systemCurrency, exchangeRates)}</strong></span>
-                <span className="text-red-700 font-extrabold bg-red-100/80 border border-red-200 px-2 py-0.5 rounded-md">
-                  الديون: -{formatAmount(remainingDebtsUSD, systemCurrency, exchangeRates)}
-                </span>
-              </div>
             </div>
           </div>
 
@@ -918,7 +949,7 @@ export const FinancialsManager: React.FC<FinancialsManagerProps> = ({
                 {/* Inventory Coverage ratio */}
                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/60 flex items-center justify-between">
                   <div>
-                    <p className="font-bold text-slate-800">نسبة تغطية قيمة المخزون للديون المتبقية</p>
+                    <p className="font-bold text-slate-800">تغطية قيمة المخزون للديون المتبقية</p>
                     <p className="text-[10px] text-slate-400">
                       قيمة المخزون ({formatAmount(totalInventoryCostUSD, systemCurrency, exchangeRates)}) مقابل ديون المخزن ({formatAmount(inventoryDebtsUSD, systemCurrency, exchangeRates)})
                     </p>
@@ -1231,21 +1262,21 @@ export const FinancialsManager: React.FC<FinancialsManagerProps> = ({
           {/* Debts Summary Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="bg-blue-500/12 p-3.5 rounded-2xl border border-blue-200/80 shadow-xs">
-              <span className="text-xs font-bold text-blue-700">إجمالي المبالغ المقترضة للأصول</span>
+              <span className="text-xs font-bold text-blue-700">الإجمالي (مبالغ الديون)</span>
               <p className="text-xl font-black text-slate-950 mt-1">
                 {formatAmount(totalDebtsUSD, systemCurrency, exchangeRates)} {systemCurrency}
               </p>
             </div>
 
             <div className="bg-emerald-500/12 p-3.5 rounded-2xl border border-emerald-200/80 shadow-xs">
-              <span className="text-xs font-bold text-emerald-700">إجمالي ما تم سداده وتوريده</span>
+              <span className="text-xs font-bold text-emerald-700">الواصل (المسدد)</span>
               <p className="text-xl font-black text-slate-950 mt-1">
                 {formatAmount(totalPaidDebtsUSD, systemCurrency, exchangeRates)} {systemCurrency}
               </p>
             </div>
 
             <div className="bg-red-500/20 p-3.5 rounded-2xl border border-red-300/80 shadow-xs">
-              <span className="text-xs font-bold text-red-700">المتبقي الواجب سداده للدائنين</span>
+              <span className="text-xs font-bold text-red-700">المتبقي المطلوب سداده</span>
               <p className="text-xl font-black text-slate-950 mt-1">
                 {formatAmount(remainingDebtsUSD, systemCurrency, exchangeRates)} {systemCurrency}
               </p>
@@ -1345,7 +1376,7 @@ export const FinancialsManager: React.FC<FinancialsManagerProps> = ({
                   {/* Financial numbers & Progress Bar */}
                   <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl text-center text-xs">
                     <div className="p-1.5 rounded-lg bg-blue-500/12 border border-blue-200/80">
-                      <span className="text-[10px] text-blue-700 font-bold">المبلغ الكلي</span>
+                      <span className="text-[10px] text-blue-700 font-bold">الإجمالي</span>
                       <p className="font-black text-slate-950">
                         {showOriginalCurrency 
                           ? `${debt.totalAmount.toLocaleString()} ${debt.currency || 'RY'}`
@@ -1359,7 +1390,7 @@ export const FinancialsManager: React.FC<FinancialsManagerProps> = ({
                       )}
                     </div>
                     <div className="p-1.5 rounded-lg bg-emerald-500/12 border border-emerald-200/80">
-                      <span className="text-[10px] text-emerald-700 font-bold">المسدد حتى الآن</span>
+                      <span className="text-[10px] text-emerald-700 font-bold">الواصل</span>
                       <p className="font-black text-slate-950">
                         {showOriginalCurrency 
                           ? `${(debt.paidAmount || 0).toLocaleString()} ${debt.currency || 'RY'}`
@@ -1368,7 +1399,7 @@ export const FinancialsManager: React.FC<FinancialsManagerProps> = ({
                       </p>
                     </div>
                     <div className="p-1.5 rounded-lg bg-red-500/20 border border-red-300/80">
-                      <span className="text-[10px] text-red-700 font-bold">المتبقي المطلوب</span>
+                      <span className="text-[10px] text-red-700 font-bold">المتبقي</span>
                       <p className="font-black text-slate-950">
                         {showOriginalCurrency 
                           ? `${remaining.toLocaleString()} ${debt.currency || 'RY'}`
@@ -1425,14 +1456,24 @@ export const FinancialsManager: React.FC<FinancialsManagerProps> = ({
             <form onSubmit={handleCreateAccount} className="space-y-3 text-xs">
               <div className="space-y-1">
                 <label className="font-bold text-slate-700">اسم الحساب / الصندوق *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="مثال: الصندوق الرئيسي، الخزينة الفرعية، حساب الكريمي"
-                  value={newAccountName}
-                  onChange={(e) => setNewAccountName(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-slate-800"
-                />
+                <div className="relative flex items-center w-full bg-slate-50 border border-slate-200 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-emerald-500">
+                  <input
+                    type="text"
+                    required
+                    placeholder="مثال: الصندوق الرئيسي، الخزينة الفرعية، حساب الكريمي"
+                    value={newAccountName}
+                    onChange={(e) => setNewAccountName(e.target.value)}
+                    className="w-full p-2.5 bg-transparent outline-none font-bold text-slate-800"
+                  />
+                  <div className="pl-1.5 shrink-0">
+                    <VoiceInputButton
+                      target="new-account-name"
+                      onResult={(text) => setNewAccountName(prev => prev ? `${prev} ${text}` : text)}
+                      className="p-1 text-slate-400 hover:text-emerald-600 rounded-md cursor-pointer"
+                      buttonTitle="تحويل الكلام إلى نص"
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -1472,20 +1513,30 @@ export const FinancialsManager: React.FC<FinancialsManagerProps> = ({
                   step="any"
                   placeholder="0"
                   value={newAccountBalance}
-                  onChange={(e) => setNewAccountBalance(e.target.value === '' ? '' : Number(e.target.value))}
+                  onChange={(e) => setNewAccountBalance(e.target.value === '' ? '' : safeParseFloat(e.target.value))}
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-slate-800"
                 />
               </div>
 
               <div className="space-y-1">
                 <label className="font-bold text-slate-700">ملاحظات / بيان</label>
-                <input
-                  type="text"
-                  placeholder="بيان وملاحظات اختيارية عن الحساب وموقعه"
-                  value={newAccountNotes}
-                  onChange={(e) => setNewAccountNotes(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800"
-                />
+                <div className="relative flex items-center w-full bg-slate-50 border border-slate-200 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-emerald-500">
+                  <input
+                    type="text"
+                    placeholder="بيان وملاحظات اختيارية عن الحساب وموقعه"
+                    value={newAccountNotes}
+                    onChange={(e) => setNewAccountNotes(e.target.value)}
+                    className="w-full p-2.5 bg-transparent outline-none text-slate-800"
+                  />
+                  <div className="pl-1.5 shrink-0">
+                    <VoiceInputButton
+                      target="new-account-notes"
+                      onResult={(text) => setNewAccountNotes(prev => prev ? `${prev} ${text}` : text)}
+                      className="p-1 text-slate-400 hover:text-emerald-600 rounded-md cursor-pointer"
+                      buttonTitle="تحويل الكلام إلى نص"
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className="flex gap-2 pt-2">
@@ -1568,7 +1619,7 @@ export const FinancialsManager: React.FC<FinancialsManagerProps> = ({
                   step="any"
                   placeholder="0"
                   value={transferAmount}
-                  onChange={(e) => setTransferAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                  onChange={(e) => setTransferAmount(e.target.value === '' ? '' : safeParseFloat(e.target.value))}
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-slate-800"
                 />
               </div>
@@ -1657,7 +1708,7 @@ export const FinancialsManager: React.FC<FinancialsManagerProps> = ({
                     step="any"
                     placeholder="0"
                     value={newDebtTotal}
-                    onChange={(e) => setNewDebtTotal(e.target.value === '' ? '' : Number(e.target.value))}
+                    onChange={(e) => setNewDebtTotal(e.target.value === '' ? '' : safeParseFloat(e.target.value))}
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 font-bold text-slate-800"
                   />
                 </div>
@@ -1792,7 +1843,7 @@ export const FinancialsManager: React.FC<FinancialsManagerProps> = ({
                   step="any"
                   placeholder="0"
                   value={paymentAmount}
-                  onChange={(e) => setPaymentAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                  onChange={(e) => setPaymentAmount(e.target.value === '' ? '' : safeParseFloat(e.target.value))}
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-slate-800 text-sm"
                 />
               </div>
@@ -2149,7 +2200,7 @@ export const FinancialsManager: React.FC<FinancialsManagerProps> = ({
                   setIsEditAccountsModalOpen(false);
                   setEditingAccount(null);
                 }}
-                className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-black transition-colors cursor-pointer"
+                className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-xl text-xs font-black transition-colors cursor-pointer"
               >
                 إغلاق
               </button>

@@ -5,7 +5,7 @@ import { defineConfig, loadEnv } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, '.', '');
+  const env = loadEnv(mode, process.cwd(), '');
   return {
     base: './',
     plugins: [
@@ -13,7 +13,6 @@ export default defineConfig(({ mode }) => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon.svg'],
         workbox: {
           maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
         },
@@ -26,19 +25,6 @@ export default defineConfig(({ mode }) => {
           display: 'standalone',
           start_url: '/',
           orientation: 'portrait',
-          icons: [
-            {
-              src: 'icon.svg',
-              sizes: '192x192',
-              type: 'image/svg+xml',
-            },
-            {
-              src: 'icon.svg',
-              sizes: '512x512',
-              type: 'image/svg+xml',
-              purpose: 'any maskable',
-            },
-          ],
         },
       }),
     ],
@@ -52,9 +38,13 @@ export default defineConfig(({ mode }) => {
       dedupe: ['react', 'react-dom'],
     },
     optimizeDeps: {
-      include: ['react', 'react-dom', '@react-oauth/google'],
+      entries: ['index.html'],
+      include: ['react', 'react-dom', '@react-oauth/google', '@emotion/is-prop-valid'],
     },
     server: {
+      watch: {
+        ignored: ['**/android/**', '**/dist/**'],
+      },
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',

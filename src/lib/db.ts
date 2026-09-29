@@ -19,6 +19,7 @@ export class FaisaliDatabase extends Dexie {
   reportSchedules!: Table<ReportSchedule>;
   cashAccounts!: Table<CashAccount>;
   debtAccounts!: Table<DebtAccount>;
+  voiceChats!: Table<any, string>;
 
   constructor() {
     super('FaisaliDB');
@@ -100,6 +101,12 @@ export class FaisaliDatabase extends Dexie {
       reportSchedules: '++id, type, frequency, deliveryMethod, nextRun',
       cashAccounts: '++id, name, type, currency',
       debtAccounts: '++id, name, creditorName, status, purpose, currency'
+    });
+    this.version(14).stores({
+      tasks: '++id, customer, status, createdAt, technician, category'
+    });
+    this.version(15).stores({
+      voiceChats: 'id, timestamp, role, text'
     });
   }
 }

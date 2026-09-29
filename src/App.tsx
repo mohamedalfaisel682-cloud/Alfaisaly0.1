@@ -1,12 +1,17 @@
+import { initGlobalHindiDigitsConverter, toStandardDigits, safeParseFloat, safeParseInt, hasHindiDigits } from './lib/arabicDigitsConverter';
+import { formatToDateTimeLocal, parseDateTimeLocalToISO, getDefaultExecutionTime, parseExecutionTimeToDate, formatExecutionTimeArabic } from './lib/dateUtils';
 import { CustomerCallModal } from './components/CustomerCallModal';
 import { speakImportantNotification } from './lib/ttsService';
 import { ColorPickerField } from './components/ColorPickerField';
 
 import { ReceiptPrintLayout } from './components/ReceiptPrintLayout';
 import { VoiceAssistantSettingsModal } from './components/VoiceAssistantSettingsModal';
+import { getVoiceSettings, saveVoiceSettings, isNotificationVoiceMuted, cleanTextForArabicSpeech } from './lib/voiceSettings';
+import { stopSpeech } from './lib/ttsService';
 import { FinancialsManager } from './components/FinancialsManager';
 import { AccountsManager } from './components/AccountsManager';
 import { InventoryStatistics } from './components/InventoryStatistics';
+import { TaskCompletionStats } from './components/TaskCompletionStats';
 import { NoteTaskSelector } from './components/NoteTaskSelector';
 import { NoteEntitySelector } from './components/NoteEntitySelector';
 import { CustomerFinancialAccountModal } from './components/CustomerFinancialAccountModal';
@@ -14,7 +19,7 @@ import { AccountOrCustomerSelect } from './components/AccountOrCustomerSelect';
 import { ExportToolbar } from './components/ExportToolbar';
 import { exportElementAsJPG, exportElementAsPDF, copyFormattedText, generateElementPDFBlob, generateExportCanvas } from './utils/exportUtils';
 import { ExportSettingsModal } from './components/ExportSettingsModal';
-import { subscribeExportSettingsModal, getExportSettings, resolveExportDimensions, openExportSettingsModal } from './utils/exportSettings';
+import { subscribeExportSettingsModal, getExportSettings, saveExportSettings, resolveExportDimensions, openExportSettingsModal } from './utils/exportSettings';
 import { CompatibleModelsSelect } from './components/CompatibleModelsSelect';
 import { ReportFormatModal } from './components/ReportFormatModal';
 import { TaskFormatModal } from './components/TaskFormatModal';
@@ -22,10 +27,20 @@ import { ActivityLoggerSettingsModal, DEFAULT_ACTIVITY_LOGGER_SETTINGS } from '.
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import { FlashTicker } from './components/FlashTicker';
-import { VoiceAssistant } from './components/VoiceAssistant';
+import { VoiceAssistant, GeminiIcon } from './components/VoiceAssistant';
 import { CountdownTimer } from './components/CountdownTimer';
 import { GlobalReportsAccountsSearch } from './components/GlobalReportsAccountsSearch';
 import { AccountReportModal } from './components/AccountReportModal';
+import { VoiceInputButton } from './components/VoiceInputButton';
+import { DailyBondShortcut } from './types';
+import { DailyBondPreferencesModal } from './components/DailyBondPreferencesModal';
+import { DailyBondShortcutsBar } from './components/DailyBondShortcutsBar';
+import { DataHealthCheckModal } from './components/DataHealthCheckModal';
+import { hapticLight, hapticMedium, hapticSuccess } from './utils/haptics';
+import { getDailyBondShortcuts, addDailyBondShortcut, saveDailyBondShortcuts } from './utils/dailyBondShortcuts';
+import { OmniQuickPreviewModal } from './components/OmniQuickPreviewModal';
+import { ExitConfirmModal } from './components/ExitConfirmModal';
+import { FontSettingsModal } from './components/FontSettingsModal';
 
 
 import { createPortal } from 'react-dom';
@@ -34,16 +49,17 @@ import { createPortal } from 'react-dom';
 
 
 
-import { Menu, LayoutDashboard, LayoutGrid, Settings2, Mic, Home, PlusCircle, PackagePlus, Wallet, ClipboardList, Users, Package, BarChart3, Search, Clock, AlertCircle, AlertTriangle, CheckCircle2, Check, TrendingUp, TrendingDown, Smartphone, Edit2, Trash2, History, X, ShieldCheck, Phone, MapPin, Calendar, FileText, Image as ImageIcon, FileType2, Printer, Plus, Minus, MinusCircle, Share2, Database, Download, Upload, ChevronDown, ChevronLeft, ChevronUp, ChevronRight, Briefcase, Bell, PlayCircle, XCircle, ArrowUp, ArrowDown, LayoutList, Globe, Lock, Fingerprint, Shield, User as UserIcon, LogOut, Delete, Tags, Palette, Box, Type, Layers, HelpCircle, Copy, Settings, Coins, ArrowUpDown, ArrowDownAZ, ArrowUpAZ, SortAsc, SortDesc, MessageCircle, RefreshCw, ExternalLink, ImagePlus, Camera, FolderOpen, Ticket, PhoneCall, Monitor, Archive, SlidersHorizontal, Circle, Eye, Info, StickyNote, Sparkles, Bookmark , Cloud , ArrowLeft, ArrowRight, Mail, Maximize2, Minimize2, FolderInput, CloudDownload, Router, Wifi, Radio, Disc, Satellite, Network, Cpu, Server, Tv, Signal, Zap, Laptop, Building2, Landmark, Receipt, Wrench, PackageCheck, TableProperties, MessageSquare, Columns, ListFilter, AlignJustify, Stamp, PenTool } from 'lucide-react';
+import { Menu, LayoutDashboard, LayoutGrid, Settings2, Mic, Home, PlusCircle, PackagePlus, Wallet, ClipboardList, Users, Package, BarChart3, Search, Clock, AlertCircle, AlertTriangle, CheckCircle2, Check, TrendingUp, TrendingDown, Smartphone, Edit2, Trash2, History, X, ShieldCheck, Phone, MapPin, Calendar, FileText, Image as ImageIcon, FileType2, Printer, Plus, Minus, MinusCircle, Share2, Database, Download, Upload, ChevronDown, ChevronLeft, ChevronUp, ChevronRight, Briefcase, Bell, BellRing, UserCheck, Volume2, VolumeX, PlayCircle, XCircle, ArrowUp, ArrowDown, LayoutList, Globe, Lock, Fingerprint, Shield, User as UserIcon, LogOut, Delete, Tags, Palette, Box, Type, Layers, HelpCircle, Copy, Settings, Coins, ArrowUpDown, ArrowDownAZ, ArrowUpAZ, SortAsc, SortDesc, MessageCircle, RefreshCw, ExternalLink, ImagePlus, Camera, FolderOpen, Ticket, PhoneCall, Monitor, Archive, Sliders, SlidersHorizontal, Circle, Eye, Info, StickyNote, Sparkles, Bookmark , Cloud , ArrowLeft, ArrowRight, Mail, Maximize2, Minimize2, FolderInput, CloudDownload, Router, Wifi, Radio, Disc, Satellite, Network, Cpu, Server, Tv, Signal, Zap, Laptop, Building2, Landmark, Receipt, Wrench, PackageCheck, TableProperties, MessageSquare, Columns, ListFilter, AlignJustify, Stamp, PenTool, ArrowUpRight, ArrowDownLeft, Star } from 'lucide-react';
 import { motion, AnimatePresence, useMotionValue, useTransform, useAnimation } from 'motion/react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from './lib/db';
-import { Task, Customer, InventoryItem, Transaction, TransactionType, Currency, ExchangeRates, TaskStatus, DeviceModel, User, UserPermissions , ReportSchedule, ActivityLoggerSettings } from './types';
+import type { Task, Customer, InventoryItem, Transaction, TransactionType, Currency, ExchangeRates, TaskStatus, DeviceModel, User, UserPermissions , ReportSchedule, ActivityLoggerSettings } from './types';
 import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Legend } from 'recharts';
 import LZString from 'lz-string';
 import { cn, getInUSD, convertCurrency, convertAndRound, formatAmount, DEVICE_TYPES, DEVICE_MODELS, INVENTORY_CATEGORIES, DEFAULT_ISSUE_OPTIONS, DEFAULT_INSPECTION_OPTIONS, DEFAULT_ACCOUNT_OPTIONS } from './lib/utils';
-import { isNativeApp, shareTextNative, downloadBlob, showNotificationNative, requestNotificationPermission, cancelNativeNotification, exportBackupToAndroidNativeDrive, getApiUrl } from './lib/nativeService';
-import { startUnifiedSpeechRecognition, stopUnifiedSpeechRecognition } from './lib/nativeSpeechService';
+import { isNativeApp, shareTextNative, downloadBlob, showNotificationNative, requestNotificationPermission, cancelNativeNotification, exportBackupToAndroidNativeDrive, getApiUrl, requestNotificationAndSmsPermissionsNative, openNotificationListenerSettingsNative, checkNotificationAndSmsStatusNative } from './lib/nativeService';
+import { parseFinancialNotification, ParsedFinancialNotification } from './lib/notificationParser';
+import { startUnifiedSpeechRecognition, stopUnifiedSpeechRecognition, setNativeInputValue } from './lib/nativeSpeechService';
 import {
   syncTransactionToCashAccount,
   revertTransactionFromCashAccount,
@@ -608,6 +624,19 @@ const DEFAULT_UI_SETTINGS = {
   appFontFamily: '',
   appFontImport: '',
   globalTextSize: '',
+  globalFontSizeScale: '1.0',
+  mainTabsFontFamily: '',
+  mainTabsFontSize: '13px',
+  mainTabsFontWeight: 'font-bold',
+  detailsFontFamily: '',
+  detailsFontSize: '12px',
+  reportsFontFamily: '',
+  reportsFontSize: '11px',
+  inputsFontFamily: '',
+  inputsFontSize: '13px',
+  numbersFontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+  numbersFontSize: '14px',
+  numbersWeight: 'font-bold',
   homeIconSize: 'w-6 h-6',
   taskModalLayout: 'default',
   executionTimeOptions: [
@@ -628,7 +657,11 @@ const DEFAULT_UI_SETTINGS = {
   floatingIconContent: 'ملاحظات وتنبيهات سريعة',
   floatingIconDisplayMode: 'all',
   floatingIconX: null,
-  floatingIconY: null
+  floatingIconY: null,
+  assistantIconEnabled: true,
+  assistantPosition: 'bottom-right' as 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left',
+  floatingExitAssistantEnabled: true,
+  floatingExitAssistantPosition: 'bottom-right' as 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left'
 };
 
 const DEFAULT_CARD_STYLING = {
@@ -1083,7 +1116,12 @@ const Button = ({ children, className, onClick, variant = 'primary', size = 'md'
   );
 };
 
-const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(({ value, onChange, defaultValue, ...props }, ref) => {
+export interface ExtendedInputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  disableVoice?: boolean;
+  isNumeric?: boolean;
+}
+
+const Input = React.forwardRef<HTMLInputElement, ExtendedInputProps>(({ value, onChange, defaultValue, disableVoice, isNumeric, ...props }, ref) => {
   const [internalValue, setInternalValue] = useState<string>((value !== undefined ? value : defaultValue) as string || '');
   const localRef = useRef<HTMLInputElement>(null);
 
@@ -1098,8 +1136,8 @@ const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLI
     const inputEl = localRef.current;
     if (inputEl) {
       inputEl.value = '';
+      inputEl.blur(); // Instantly un-focus/deactivate typing
       
-      // Dispatch events so React state in parent or form controllers trigger
       const inputEvent = new Event('input', { bubbles: true });
       inputEl.dispatchEvent(inputEvent);
 
@@ -1116,6 +1154,42 @@ const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLI
     }
   };
 
+  const handleVoiceResult = (text: string) => {
+    setInternalValue(text);
+    const inputEl = localRef.current;
+    if (inputEl) {
+      setNativeInputValue(inputEl, text);
+      
+      const inputEvent = new Event('input', { bubbles: true });
+      inputEl.dispatchEvent(inputEvent);
+
+      const changeEvent = new Event('change', { bubbles: true });
+      inputEl.dispatchEvent(changeEvent);
+
+      if (onChange) {
+        const customEvent = {
+          target: { ...inputEl, value: text, name: props.name },
+          currentTarget: { ...inputEl, value: text, name: props.name },
+        } as any;
+        onChange(customEvent);
+      }
+    }
+  };
+
+  // Determine if this input should show voice input button
+  const isExcludedType = props.type === 'password' || props.type === 'file' || props.type === 'checkbox' || props.type === 'radio' || props.type === 'color' || props.type === 'date' || props.type === 'datetime-local' || props.type === 'time';
+  const isDropdownControlled = !!props.list || !!(props as any)['data-dropdown'] || !!(props as any)['data-no-voice'];
+  const showVoice = !disableVoice && !isExcludedType && !isDropdownControlled && !props.readOnly && !props.disabled;
+
+  // Determine if this input is financial / numeric
+  const nameLower = (props.name || '').toLowerCase();
+  const placeholderLower = (props.placeholder || '').toLowerCase();
+  const isFinancial = isNumeric ?? (
+    props.type === 'number' ||
+    ['cost', 'deposit', 'paid', 'remaining', 'amount', 'price', 'total', 'payment', 'balance', 'received', 'taskmodelcost', 'account', 'costprice', 'sellingprice'].includes(nameLower) ||
+    /مبلغ|تكلفة|تكلفه|واصل|باقي|دفعة|دفعه|حساب|سعر|إجمالي|اجمالي/.test(placeholderLower)
+  );
+
   return (
     <div className="relative w-full">
       <input
@@ -1127,59 +1201,141 @@ const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLI
             else (ref as any).current = node;
           }
         }}
-        value={value || defaultValue || ""}
+        value={value !== undefined ? value : (defaultValue !== undefined ? defaultValue : internalValue)}
         onChange={(e) => {
-          setInternalValue(e.target.value);
+          const raw = e.target.value;
+          const normalized = toStandardDigits(raw);
+          if (normalized !== raw) {
+            e.target.value = normalized;
+          }
+          setInternalValue(normalized);
           if (onChange) onChange(e);
         }}
         onInput={(e: any) => {
-          setInternalValue(e.target.value);
+          const raw = e.target.value;
+          const normalized = toStandardDigits(raw);
+          if (normalized !== raw) {
+            e.target.value = normalized;
+          }
+          setInternalValue(normalized);
           if (props.onInput) props.onInput(e);
         }}
         style={{ backgroundColor: 'var(--input-bg-custom, #f8fafc)' }}
-        className={cn("w-full p-1.5 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 transition-colors pl-8", props.className)}
+        className={cn(
+          "w-full p-2 text-sm border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-colors",
+          showVoice && internalValue ? "pl-20" : (showVoice ? "pl-10" : (internalValue ? "pl-10" : "pl-3")),
+          props.className
+        )}
       />
-      {internalValue && String(internalValue).length > 0 && (
-        <button
-          type="button"
-          onClick={handleClear}
-          className="absolute left-1.5 top-1/2 -translate-y-1/2 p-0.5 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-md transition-all cursor-pointer border border-transparent hover:border-red-100 z-10 flex items-center justify-center"
-          title="مسح النص والكتابة من جديد"
-        >
-          <X className="w-3.5 h-3.5 text-red-500" />
-        </button>
-      )}
+      <div className="absolute left-0 top-0 bottom-0 h-full flex items-center z-10 overflow-hidden rounded-l-xl">
+        {showVoice && (
+          <div className="h-full flex items-center justify-center px-1">
+            <VoiceInputButton
+              inputRef={localRef}
+              isNumeric={isFinancial}
+              onResult={handleVoiceResult}
+              target={`input-${props.name || 'field'}`}
+              title={isFinancial ? 'إدخال المبلغ بالصوت (يتحول لرقم تلقائياً)' : 'إدخال النص بالصوت'}
+            />
+          </div>
+        )}
+        {internalValue && String(internalValue).length > 0 && (
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={handleClear}
+            className="h-full aspect-square bg-red-500 hover:bg-red-600 active:bg-red-700 text-white transition-all cursor-pointer flex items-center justify-center shrink-0 font-bold"
+            title="مسح النص وإلغاء المدخلات بنقرة واحدة"
+          >
+            <X className="w-4 h-4 stroke-[3]" />
+          </button>
+        )}
+      </div>
     </div>
   );
 });
 Input.displayName = 'Input';
 
-const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttributes<HTMLTextAreaElement>>(({ value, onChange, ...props }, ref) => {
+const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttributes<HTMLTextAreaElement> & { disableVoice?: boolean }>(({ value, onChange, disableVoice, ...props }, ref) => {
+  const localRef = useRef<HTMLTextAreaElement>(null);
+
+  const handleClear = () => {
+    const el = localRef.current;
+    if (el) {
+      el.value = '';
+      const inputEvent = new Event('input', { bubbles: true });
+      el.dispatchEvent(inputEvent);
+      const changeEvent = new Event('change', { bubbles: true });
+      el.dispatchEvent(changeEvent);
+    }
+    if (onChange) {
+      onChange({ target: { value: '', name: props.name } } as any);
+    }
+  };
+
+  const handleVoiceResult = (text: string) => {
+    const el = localRef.current;
+    const currentVal = (value !== undefined ? String(value) : (el?.value || ''));
+    const newVal = currentVal.trim() ? `${currentVal.trim()}\n${text}` : text;
+
+    if (el) {
+      setNativeInputValue(el, newVal);
+      const inputEvent = new Event('input', { bubbles: true });
+      el.dispatchEvent(inputEvent);
+      const changeEvent = new Event('change', { bubbles: true });
+      el.dispatchEvent(changeEvent);
+    }
+    if (onChange) {
+      onChange({ target: { value: newVal, name: props.name } } as any);
+    }
+  };
+
+  const showVoice = !disableVoice && !props.readOnly && !props.disabled;
+
   return (
     <div className="relative w-full">
       <textarea
         {...props}
-        ref={ref}
+        ref={(node) => {
+          (localRef as any).current = node;
+          if (ref) {
+            if (typeof ref === 'function') ref(node);
+            else (ref as any).current = node;
+          }
+        }}
         value={value}
-        onChange={onChange}
+        onChange={(e) => {
+          if (onChange) onChange(e);
+        }}
         style={{ backgroundColor: 'var(--input-bg-custom, #f8fafc)' }}
-        className={cn("w-full p-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 transition-colors", props.className)}
+        className={cn(
+          "w-full p-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 transition-colors",
+          showVoice ? "pl-14" : "pl-8",
+          props.className
+        )}
       />
-      {value && String(value).length > 0 && (
-        <button
-          type="button"
-          onClick={() => {
-            if (onChange) {
-              const e = { target: { value: '', name: props.name } } as any;
-              onChange(e);
-            }
-          }}
-          className="absolute left-2 top-2 p-0.5 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-md transition-all cursor-pointer border border-transparent hover:border-red-100 z-10"
-          title="مسح النص"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
-      )}
+      <div className="absolute left-2 top-2 flex items-center gap-1 z-10">
+        {value && String(value).length > 0 && (
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={handleClear}
+            className="p-1 hover:bg-red-100 bg-red-50 text-red-600 rounded-lg transition-all cursor-pointer border border-red-200 flex items-center justify-center shadow-2xs"
+            title="مسح النص"
+          >
+            <X className="w-4.5 h-4.5 text-red-600 stroke-[2.5]" />
+          </button>
+        )}
+        {showVoice && (
+          <VoiceInputButton
+            inputRef={localRef}
+            isNumeric={false}
+            onResult={handleVoiceResult}
+            target={`textarea-${props.name || 'field'}`}
+            title="إدخال وصف المشكلة والبيان بالصوت"
+          />
+        )}
+      </div>
     </div>
   );
 });
@@ -1518,6 +1674,19 @@ const SwipeableTaskCard = ({
   );
 };
 
+// Smart Arabic normalizer for pristine search & autocompletion
+const normalizeArabicText = (text: string): string => {
+  if (!text) return '';
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[\u064B-\u065F\u0670]/g, '') // Remove diacritics / harakat
+    .replace(/[أإآٱ]/g, 'ا') // Normalize alef
+    .replace(/ة/g, 'ه') // Normalize taa marbuta
+    .replace(/[يى]/g, 'ي') // Normalize yaa
+    .replace(/[\s\-_]+/g, ''); // Flexible spacing
+};
+
 const CustomerSelect = ({ 
   value, 
   onChange, 
@@ -1542,11 +1711,12 @@ const CustomerSelect = ({
   onAssignClassification?: (customerName: string, cls: string) => void
 }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(value || '');
   const [activeClass, setActiveClass] = useState('الكل');
   const [assignedClass, setAssignedClass] = useState<string>('');
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [coords, setCoords] = useState({ top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0 });
 
   const updatePosition = () => {
@@ -1563,6 +1733,11 @@ const CustomerSelect = ({
     }
   };
 
+  const handleOpenDropdown = () => {
+    updatePosition();
+    setIsOpen(true);
+  };
+
   useEffect(() => {
     if (isOpen) {
       updatePosition();
@@ -1576,16 +1751,17 @@ const CustomerSelect = ({
   }, [isOpen]);
 
   useEffect(() => {
-    if (value !== search) setSearch(value);
+    if (value !== search) setSearch(value || '');
   }, [value]);
 
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node;
       if (
         containerRef.current &&
-        !containerRef.current.contains(e.target as Node) &&
+        !containerRef.current.contains(target) &&
         dropdownRef.current &&
-        !dropdownRef.current.contains(e.target as Node)
+        !dropdownRef.current.contains(target)
       ) {
         setIsOpen(false);
       }
@@ -1600,12 +1776,33 @@ const CustomerSelect = ({
     };
   }, [isOpen]);
 
-  const sortedCustomers = [...customers].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
-  const filtered = sortedCustomers.filter(c => {
-    const matchClass = activeClass === 'الكل' || c.classification?.includes(activeClass);
-    const matchSearch = search ? c.name.toLowerCase().includes(search.toLowerCase()) : true;
-    return matchClass && matchSearch;
-  });
+  const sortedCustomers = useMemo(() => {
+    return [...customers].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
+  }, [customers]);
+
+  const filtered = useMemo(() => {
+    const query = (search || '').trim();
+    const normQuery = normalizeArabicText(query);
+    const rawQuery = query.toLowerCase();
+    const stdQuery = toStandardDigits(rawQuery);
+
+    return sortedCustomers.filter(c => {
+      const matchClass = activeClass === 'الكل' || c.classification?.includes(activeClass);
+      if (!matchClass) return false;
+      if (!query) return true; // Show all when empty on click
+
+      const normName = normalizeArabicText(c.name || '');
+      const rawName = (c.name || '').toLowerCase();
+      const nameMatch = normName.includes(normQuery) || rawName.includes(rawQuery) || rawName.includes(stdQuery);
+
+      const phoneMatch = Boolean(
+        (c.phones && c.phones.some((p: string) => p && (p.replace(/\s+/g, '').includes(rawQuery) || p.replace(/\s+/g, '').includes(stdQuery)))) ||
+        (c.phone && (c.phone.replace(/\s+/g, '').includes(rawQuery) || c.phone.replace(/\s+/g, '').includes(stdQuery)))
+      );
+
+      return nameMatch || phoneMatch;
+    });
+  }, [sortedCustomers, search, activeClass]);
 
   return (
     <div className="relative w-full flex-col flex gap-0.5" ref={containerRef}>
@@ -1614,15 +1811,23 @@ const CustomerSelect = ({
            <div className="flex items-center gap-1.5">
              <label 
                className="text-[10px] font-bold text-slate-700 cursor-pointer hover:text-emerald-700 select-none transition-colors"
-               onClick={(e) => { e.stopPropagation(); if (!isOpen) setSearch(''); setIsOpen(!isOpen); }}
+               onClick={(e) => { 
+                 e.stopPropagation(); 
+                 updatePosition();
+                 setIsOpen(!isOpen); 
+               }}
              >
                {label}
              </label>
              <button
                type="button"
-               onClick={(e) => { e.stopPropagation(); setSearch(''); setIsOpen(!isOpen); }}
+               onClick={(e) => { 
+                 e.stopPropagation(); 
+                 updatePosition();
+                 setIsOpen(!isOpen); 
+               }}
                className={cn("flex items-center justify-center p-0.5 w-6 h-6 rounded-md text-emerald-600 hover:bg-emerald-50 transition-colors border outline-none shadow-sm cursor-pointer", isOpen ? "bg-emerald-50 border-emerald-200" : "bg-white border-slate-200")}
-               title="قائمة العملاء"
+               title="قائمة العملاء والاقتراحات"
              >
                <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", isOpen && "rotate-180")} />
              </button>
@@ -1633,189 +1838,236 @@ const CustomerSelect = ({
 
       <div className="relative w-full">
         <input 
+          ref={inputRef}
           type="text"
           name={name}
           autoComplete="off"
           placeholder={placeholder}
           value={search}
+          onClick={handleOpenDropdown}
+          onFocus={handleOpenDropdown}
           onChange={(e) => {
-            setSearch(e.target.value);
-            onChange(e.target.value);
-            setIsOpen(true);
+            const raw = e.target.value;
+            const val = toStandardDigits(raw);
+            if (val !== raw) {
+              e.target.value = val;
+            }
+            setSearch(val);
+            onChange(val);
+            handleOpenDropdown();
           }}
-          onFocus={() => setIsOpen(true)}
-          className={cn(className, !label ? "pl-14" : "pl-8")}
+          className={cn(className, "pl-16")}
         />
-        {search && (
-          <button
-            type="button"
-            onClick={() => {
-              setSearch('');
-              onChange('');
+        <div className="absolute left-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1 z-10">
+          <VoiceInputButton
+            inputRef={inputRef}
+            isNumeric={false}
+            onResult={(text) => {
+              setSearch(text);
+              onChange(text);
+              handleOpenDropdown();
             }}
-            className={cn(
-              "absolute top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-red-500 rounded-full transition-colors z-10 cursor-pointer",
-              !label ? "left-8" : "left-2"
-            )}
-            title="حذف الاسم"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        )}
-        {!label && (
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); setSearch(''); setIsOpen(!isOpen); }}
-            className="absolute left-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-emerald-600 transition-colors z-10 cursor-pointer"
-          >
-            <ChevronDown className={cn("w-4 h-4 transition-transform flex-shrink-0", isOpen && "rotate-180")} />
-          </button>
-        )}
+            target="customer-name"
+            title="إدخال اسم العميل بالصوت"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSearch('');
+                onChange('');
+                inputRef.current?.focus();
+                handleOpenDropdown();
+              }}
+              className="p-1 text-slate-400 hover:text-red-500 rounded-full transition-colors cursor-pointer"
+              title="حذف الاسم"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {!label && (
+            <button
+              type="button"
+              onClick={(e) => { 
+                e.stopPropagation(); 
+                updatePosition();
+                setIsOpen(!isOpen); 
+              }}
+              className="p-1 text-slate-400 hover:text-emerald-600 transition-colors cursor-pointer"
+            >
+              <ChevronDown className={cn("w-4 h-4 transition-transform flex-shrink-0", isOpen && "rotate-180")} />
+            </button>
+          )}
+        </div>
       </div>
 
       {createPortal(
         <AnimatePresence>
           {isOpen && (
-            <>
-            <div className="fixed inset-0 z-[99998]" onClick={(e) => { e.stopPropagation(); setIsOpen(false); }} />
             <motion.div
-            ref={dropdownRef}
-            initial={{ opacity: 0, scale: 0.95, y: -10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: -10 }}
-            className="fixed bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800 z-[99999]"
-            style={(() => {
-              const dropdownWidth = Math.max(320, coords.width || 320);
-              const isLeftHalf = coords.left + dropdownWidth / 2 < window.innerWidth / 2;
-              let calculatedLeft = isLeftHalf
-                ? Math.max(12, Math.min(window.innerWidth - dropdownWidth - 12, coords.left))
-                : Math.max(12, Math.min(window.innerWidth - dropdownWidth - 12, coords.right - dropdownWidth));
+              ref={dropdownRef}
+              initial={{ opacity: 0, scale: 0.96, y: -6 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: -6 }}
+              transition={{ duration: 0.16 }}
+              className="fixed bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden text-slate-800 z-[99999]"
+              style={(() => {
+                const currentContainerWidth = containerRef.current ? containerRef.current.getBoundingClientRect().width : coords.width;
+                const dropdownWidth = Math.max(300, currentContainerWidth || 300);
+                const currentLeft = containerRef.current ? containerRef.current.getBoundingClientRect().left : coords.left;
+                const currentBottom = containerRef.current ? containerRef.current.getBoundingClientRect().bottom : coords.bottom;
+                const currentTop = containerRef.current ? containerRef.current.getBoundingClientRect().top : coords.top;
 
-              const spaceBelow = window.innerHeight - coords.bottom;
-              const spaceAbove = coords.top;
-              const effectiveDir = (spaceBelow < 350 && spaceAbove > spaceBelow) ? 'up' : 'down';
+                const calculatedLeft = Math.max(8, Math.min(window.innerWidth - dropdownWidth - 8, currentLeft));
+                const spaceBelow = window.innerHeight - currentBottom;
+                const effectiveDir = (spaceBelow < 280 && currentTop > spaceBelow) ? 'up' : 'down';
 
-              return {
-                top: effectiveDir === 'up' ? 'auto' : coords.bottom + 4,
-                bottom: effectiveDir === 'up' ? window.innerHeight - coords.top + 4 : 'auto',
-                left: calculatedLeft,
-                width: dropdownWidth,
-                maxHeight: '75vh',
-                display: 'flex',
-                flexDirection: 'column'
-              };
-            })()}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-3 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <button 
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); setIsOpen(false); }}
-                  className="p-1 hover:bg-slate-200 rounded-lg transition-colors"
-                >
-                  <X className="w-3.5 h-3.5 text-slate-400" />
-                </button>
-                <span className="text-xs font-black text-slate-500 uppercase ">{label || "العميل"}</span>
-              </div>
-            </div>
-            <div className="p-2 border-b border-slate-100 bg-slate-50/50">
-               <div className="relative">
-                 <Search className="w-4 h-4 absolute right-2.5 top-2.5 text-slate-400" />
-                 <input 
-                   type="text"
-                   name="dropdown-search"
-                   autoComplete="off"
-                   placeholder="بحث في قائمة العملاء..."
-                   value={search}
-                   onChange={(e) => {
-                     setSearch(e.target.value);
-                     onChange(e.target.value);
-                   }}
-                   className="w-full pr-8 pl-3 py-1.5 text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
+                return {
+                  top: effectiveDir === 'up' ? 'auto' : currentBottom + 4,
+                  bottom: effectiveDir === 'up' ? window.innerHeight - currentTop + 4 : 'auto',
+                  left: calculatedLeft,
+                  width: dropdownWidth,
+                  maxHeight: '65vh',
+                  display: 'flex',
+                  flexDirection: 'column'
+                };
+              })()}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header: Classifications Filter & Results Count */}
+              <div className="p-2.5 border-b border-slate-100 bg-slate-50/90 flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="text-xs font-black text-slate-700">
+                      اقتراحات العملاء ({filtered.length})
+                    </span>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => setIsOpen(false)}
+                    className="p-1 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                    title="إغلاق القائمة"
+                  >
+                    <X className="w-3.5 h-3.5 text-slate-400" />
+                  </button>
                 </div>
+
+                {/* Quick Classification Chips */}
+                {classificationOptions.length > 0 && (
+                  <div className="flex items-center gap-1 overflow-x-auto pb-0.5 scrollbar-hide">
+                    {['الكل', ...classificationOptions].map(cls => (
+                      <button
+                        key={cls}
+                        type="button"
+                        onClick={() => setActiveClass(cls)}
+                        className={cn(
+                          "px-2 py-0.5 rounded-full text-[10px] font-extrabold whitespace-nowrap transition-all border cursor-pointer",
+                          activeClass === cls
+                            ? "bg-emerald-600 text-white border-emerald-600 shadow-2xs"
+                            : "bg-white text-slate-600 border-slate-200 hover:border-emerald-300"
+                        )}
+                      >
+                        {cls}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
-            {onAssignClassification && classificationOptions.length > 0 && (
-              <div className="flex items-center gap-1 overflow-x-auto p-2 bg-indigo-50/50 border-b border-indigo-100 scrollbar-hide">
-                <span className="text-[10px] font-bold text-indigo-700 whitespace-nowrap ml-1" title="تعيين تصنيف للعميل">تعيين تصنيف:</span>
-                {classificationOptions.map(opt => {
-                  const currentMatchedCustomer = customers.find(c => (c.name || '').trim().toLowerCase() === search.trim().toLowerCase());
-                  const currentClass = currentMatchedCustomer ? currentMatchedCustomer.classification : assignedClass;
-                  return (
-                    <button
-                      key={'assign-'+opt}
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setAssignedClass(opt);
-                        if (onAssignClassification) onAssignClassification(search, opt);
-                      }}
-                      className={"px-2 py-0.5 rounded-md text-[10px] font-bold whitespace-nowrap transition-all border " + (currentClass === opt ? "bg-indigo-500 text-white border-indigo-500 shadow-sm" : "bg-white text-slate-600 border-slate-200 hover:border-indigo-200")}
-                    >
-                      {opt}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+              {/* Assign classification to new customer if provided */}
+              {onAssignClassification && classificationOptions.length > 0 && (
+                <div className="flex items-center gap-1 overflow-x-auto px-2.5 py-1.5 bg-indigo-50/60 border-b border-indigo-100 scrollbar-hide">
+                  <span className="text-[10px] font-bold text-indigo-700 whitespace-nowrap ml-1">تعيين تصنيف:</span>
+                  {classificationOptions.map(opt => {
+                    const currentMatchedCustomer = customers.find(c => (c.name || '').trim().toLowerCase() === search.trim().toLowerCase());
+                    const currentClass = currentMatchedCustomer ? currentMatchedCustomer.classification : assignedClass;
+                    return (
+                      <button
+                        key={'assign-'+opt}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setAssignedClass(opt);
+                          if (onAssignClassification) onAssignClassification(search, opt);
+                        }}
+                        className={cn(
+                          "px-2 py-0.5 rounded-md text-[10px] font-bold whitespace-nowrap transition-all border cursor-pointer",
+                          currentClass === opt 
+                            ? "bg-indigo-600 text-white border-indigo-600 shadow-xs" 
+                            : "bg-white text-slate-600 border-slate-200 hover:border-indigo-200"
+                        )}
+                      >
+                        {opt}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
-
-
-            <div className="overflow-y-auto flex-1 p-2 space-y-1.5">
-              {filtered.map(c => (
-                <div
-                  key={c.id}
-                  className="w-full text-right p-2.5 bg-white hover:bg-emerald-50/50 transition-colors rounded-xl border border-slate-100 shadow-xs flex flex-col gap-1.5"
-                >
-                  <div 
-                    className="flex justify-between items-center cursor-pointer"
+              {/* Customer Suggestions List */}
+              <div className="overflow-y-auto flex-1 p-2 space-y-1.5 custom-scrollbar">
+                {filtered.map(c => (
+                  <div
+                    key={c.id || c.name}
                     onClick={() => {
                       setSearch(c.name);
                       onChange(c.name);
                       setIsOpen(false);
                     }}
+                    className="w-full text-right p-2 bg-white hover:bg-emerald-50/70 active:bg-emerald-100 transition-colors rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between gap-2 cursor-pointer group"
                   >
-                    <div className="flex items-center gap-2">
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center ${(c.phones && c.phones.length > 0) || (c.phone && c.phone.trim() !== '') ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-500'}`}>
-                        <Phone className="w-3 h-3" />
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className={cn(
+                        "w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors",
+                        (c.phones && c.phones.length > 0) || (c.phone && c.phone.trim() !== '') 
+                          ? "bg-emerald-100 text-emerald-700 group-hover:bg-emerald-200" 
+                          : "bg-slate-100 text-slate-500"
+                      )}>
+                        <Phone className="w-3.5 h-3.5" />
                       </div>
-                      <div>
-                        <div className="font-bold text-slate-800 text-sm">{c.name}</div>
+                      <div className="min-w-0">
+                        <div className="font-extrabold text-slate-800 text-xs sm:text-sm group-hover:text-emerald-900 truncate">
+                          {c.name}
+                        </div>
                         {c.classification && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-extrabold inline-block mt-0.5">
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200/60 font-bold inline-block mt-0.5">
                             {c.classification}
                           </span>
                         )}
                       </div>
                     </div>
                     {c.phones && c.phones.length > 0 && (
-                      <div className="text-[10px] text-slate-500 font-mono dir-ltr">{c.phones[0]}</div>
+                      <span className="text-[10px] text-slate-500 font-mono dir-ltr shrink-0 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200/50">
+                        {c.phones[0]}
+                      </span>
                     )}
                   </div>
-                </div>
-              ))}
-              {filtered.length === 0 && search.trim() !== '' && (
-                 <div 
-                   onClick={() => {
-                     onChange(search);
-                     setIsOpen(false);
-                   }}
-                   className="px-3 py-3 text-xs text-slate-500 text-center bg-slate-50 rounded-lg cursor-pointer hover:bg-emerald-50 hover:text-emerald-700 transition-colors"
-                 >
-                   إضافة العميل: <span className="font-bold text-emerald-600">{search}</span>
-                 </div>
-              )}
-              {filtered.length === 0 && search.trim() === '' && (
-                 <div className="px-3 py-4 text-xs text-slate-400 text-center flex flex-col items-center gap-2">
-                   <Users className="w-6 h-6 text-slate-300" />
-                   لا يوجد عملاء بهذا التصنيف
-                 </div>
-              )}
-            </div>
-                      </motion.div>
-          </>
+                ))}
+
+                {/* Option to add new customer directly */}
+                {search.trim() !== '' && !customers.some(c => (c.name || '').trim().toLowerCase() === search.trim().toLowerCase()) && (
+                  <div 
+                    onClick={() => {
+                      onChange(search.trim());
+                      setIsOpen(false);
+                    }}
+                    className="p-2.5 text-xs text-slate-700 text-center bg-emerald-50/70 border border-emerald-200/70 rounded-xl cursor-pointer hover:bg-emerald-100/80 transition-all font-bold flex items-center justify-center gap-1.5 shadow-2xs"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>إضافة واعتماد العميل الجديد: <span className="font-black text-emerald-700">"{search.trim()}"</span></span>
+                  </div>
+                )}
+
+                {filtered.length === 0 && search.trim() === '' && (
+                  <div className="py-6 text-xs text-slate-400 text-center flex flex-col items-center gap-2">
+                    <Users className="w-7 h-7 text-slate-300" />
+                    <span>لا توجد سجلات عملاء في هذا التصنيف</span>
+                  </div>
+                )}
+              </div>
+            </motion.div>
           )}
         </AnimatePresence>,
         document.body
@@ -2249,15 +2501,25 @@ const TextOptionsDropdown = ({
 
               {showSearch && (
               <div className="p-2 border-b border-slate-100">
-                <div className="relative">
+                <div className="relative flex items-center">
                   <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
                   <input 
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder={searchPlaceholder}
-                    className="w-full pr-8 pl-3 py-1.5 text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full pr-8 pl-8 py-1.5 text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
                   />
+                  {searchQuery ? (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute left-0 top-0 bottom-0 h-full aspect-square bg-red-500 hover:bg-red-600 active:bg-red-700 text-white transition-all cursor-pointer flex items-center justify-center shrink-0 font-bold rounded-l-lg"
+                      title="مسح النص وإلغاء المدخلات بنقرة واحدة"
+                    >
+                      <X className="w-3.5 h-3.5 stroke-[3]" />
+                    </button>
+                  ) : null}
                 </div>
               </div>
               )}
@@ -2902,55 +3164,201 @@ const InventoryPage = ({
 const AlarmModal = ({ 
   task, 
   onClose, 
-  onExecute,
+  onExecute, 
   onDone, 
   onPostpone, 
   onCancel 
 }: { 
   task: Task, 
   onClose: () => void, 
-  onExecute: () => void,
+  onExecute: () => void, 
   onDone: () => void, 
   onPostpone: (minutes: number) => void, 
   onCancel: () => void 
 }) => {
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isAlarmMuted, setIsAlarmMuted] = useState(false);
+
+  // Silencing function
+  const silenceAlarmSound = () => {
+    try {
+      if ((window as any).__activeAlarmAudio) {
+        (window as any).__activeAlarmAudio.pause();
+        (window as any).__activeAlarmAudio.currentTime = 0;
+        (window as any).__activeAlarmAudio = null;
+      }
+      setIsAlarmMuted(true);
+    } catch (e) {
+      console.warn('Silencing alarm sound failed:', e);
+    }
+  };
+
+  // Clean up audio & speech on unmount
+  useEffect(() => {
+    return () => {
+      silenceAlarmSound();
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
+  const handleToggleSoundAndRead = () => {
+    // 1. Silence the ringing sound immediately
+    silenceAlarmSound();
+
+    // 2. Check if mute is enabled in settings
+    const isMutedInSettings = isNotificationVoiceMuted();
+    if (isMutedInSettings) {
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+      setIsSpeaking(false);
+      toast('تم إسكات صوت التنبيه (القراءة الصوتية معطلة في الإعدادات)', { icon: '🔇' });
+      return;
+    }
+
+    // 3. If currently speaking, stop it
+    if (isSpeaking) {
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+      setIsSpeaking(false);
+      toast.success('تم إيقاف القراءة الصوتية');
+      return;
+    }
+
+    // 4. Read notification aloud in Arabic
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+        const execTimeStr = task.executionTime ? formatExecutionTimeArabic(task.executionTime) : '';
+        const rawText = `تذكير بموعد مهمة. العميل: ${task.customer || 'غير محدد'}. الجهاز: ${getDisplayDeviceStr(task)}.${execTimeStr ? ` موعد التنفيذ: ${execTimeStr}.` : ''} ${task.issue ? `المشكلة: ${task.issue}.` : ''}`;
+        const textToRead = cleanTextForArabicSpeech(rawText);
+        const utterance = new SpeechSynthesisUtterance(textToRead);
+        utterance.lang = 'ar-SA';
+        utterance.rate = 0.95;
+        utterance.pitch = 0.9;
+        utterance.onstart = () => setIsSpeaking(true);
+        utterance.onend = () => setIsSpeaking(false);
+        utterance.onerror = () => setIsSpeaking(false);
+        window.speechSynthesis.speak(utterance);
+        toast('يتم قراءة بيانات المهمة بالصوت...', { icon: '📢' });
+      } catch (e) {
+        console.warn('TTS speech failed:', e);
+        setIsSpeaking(false);
+      }
+    }
+  };
+
+  const handleCloseModal = () => {
+    silenceAlarmSound();
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    onClose();
+  };
+
   return (
-    <Modal isOpen={true} onClose={onClose} title="تذكير بموعد مهمة">
-      <div className="space-y-6 p-2">
-        <div className="flex items-center gap-4 p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
-          <div className="p-3 bg-emerald-500 text-white rounded-xl shadow-lg animate-pulse">
-            <Bell className="w-6 h-6" />
+    <Modal isOpen={true} onClose={handleCloseModal} title="تذكير بموعد مهمة" headerClassName="bg-emerald-50/80 backdrop-blur-xs border-b border-emerald-100">
+      <div className="space-y-5 p-1 sm:p-2 dir-rtl">
+        {/* Banner with interactive sound badge on the bell icon */}
+        <div className="flex items-center gap-3.5 p-3.5 sm:p-4 bg-emerald-50/80 rounded-2xl border border-emerald-200/80 shadow-2xs backdrop-blur-xs">
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={handleToggleSoundAndRead}
+              title={isSpeaking ? "إيقاف القراءة الصوتية" : "إسكات الرنين وقراءة الإشعار بالصوت"}
+              className={cn(
+                "relative p-3 rounded-2xl shadow-md transition-all cursor-pointer flex items-center justify-center active:scale-95 group",
+                isSpeaking 
+                  ? "bg-emerald-600 text-white ring-4 ring-emerald-300/60"
+                  : isAlarmMuted 
+                    ? "bg-slate-200 text-slate-700 hover:bg-slate-300"
+                    : "bg-emerald-500 text-white animate-pulse hover:bg-emerald-600 ring-2 ring-emerald-300/50"
+              )}
+            >
+              <Bell className="w-6 h-6 group-hover:rotate-12 transition-transform" />
+              
+              {/* Interactive Sound Badge on the bell */}
+              <span className={cn(
+                "absolute -bottom-1 -left-1 p-1 rounded-full border-2 border-white shadow-sm flex items-center justify-center transition-all",
+                isSpeaking 
+                  ? "bg-amber-400 text-slate-900 animate-spin" 
+                  : isAlarmMuted 
+                    ? "bg-rose-500 text-white" 
+                    : "bg-emerald-800 text-white group-hover:scale-110"
+              )}>
+                {isSpeaking ? (
+                  <Volume2 className="w-3.5 h-3.5 animate-pulse" />
+                ) : isAlarmMuted ? (
+                  <VolumeX className="w-3.5 h-3.5" />
+                ) : (
+                  <Volume2 className="w-3.5 h-3.5" />
+                )}
+              </span>
+            </button>
           </div>
-          <div>
-            <h3 className="font-bold text-emerald-900">حان موعد تنفيذ المهمة</h3>
-            <p className="text-xs text-emerald-700 font-bold">{task.customer} - {getDisplayDeviceStr(task)}</p>
+
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="font-black text-emerald-950 text-sm sm:text-base">حان موعد تنفيذ المهمة</h3>
+              <button
+                type="button"
+                onClick={handleToggleSoundAndRead}
+                className={cn(
+                  "text-[10.5px] font-bold px-2 py-0.5 rounded-lg border flex items-center gap-1 transition-all cursor-pointer active:scale-95",
+                  isSpeaking
+                    ? "bg-amber-100 text-amber-900 border-amber-300 animate-pulse"
+                    : isAlarmMuted
+                      ? "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                      : "bg-emerald-100/90 text-emerald-800 border-emerald-300 hover:bg-emerald-200/80"
+                )}
+              >
+                {isSpeaking ? <Volume2 className="w-3 h-3" /> : isAlarmMuted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+                <span>{isSpeaking ? 'يقرأ بالصوت...' : isAlarmMuted ? 'الصوت مسكوت' : 'إسكات وقراءة'}</span>
+              </button>
+            </div>
+            <p className="text-xs text-emerald-900 font-black mt-0.5 truncate">{task.customer} - {getDisplayDeviceStr(task)}</p>
+            {task.issue && (
+              <p className="text-[11px] text-emerald-700/90 font-medium truncate mt-0.5">المشكلة: {task.issue}</p>
+            )}
+            {task.executionTime && (
+              <div className="flex items-center gap-1.5 text-[11px] text-emerald-900 bg-emerald-100/80 px-2.5 py-1 rounded-lg mt-1 font-bold border border-emerald-200">
+                <Clock className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                <span>موعد التنفيذ المحفوظ:</span>
+                <span className="font-black font-mono text-emerald-950" dir="rtl">
+                  {formatExecutionTimeArabic(task.executionTime)}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <Button onClick={onDone} variant="primary" className="py-4 flex flex-col items-center gap-1">
+          <Button onClick={() => { silenceAlarmSound(); onDone(); }} variant="primary" className="py-3.5 sm:py-4 flex flex-col items-center gap-1">
             <CheckCircle2 className="w-5 h-5" />
-            <span className="text-[10px]">تم التنفيذ</span>
+            <span className="text-[11px] font-bold">تم التنفيذ</span>
           </Button>
-          <Button onClick={onExecute} variant="secondary" className="py-4 flex flex-col items-center gap-1">
+          <Button onClick={() => { silenceAlarmSound(); onExecute(); }} variant="secondary" className="py-3.5 sm:py-4 flex flex-col items-center gap-1">
             <PlayCircle className="w-5 h-5 text-emerald-600" />
-            <span className="text-[10px]">بدء العمل</span>
+            <span className="text-[11px] font-bold">بدء العمل</span>
           </Button>
-          <Button onClick={onCancel} variant="danger" className="py-4 flex flex-col items-center gap-1">
+          <Button onClick={() => { silenceAlarmSound(); onCancel(); }} variant="danger" className="py-3.5 sm:py-4 flex flex-col items-center gap-1">
             <XCircle className="w-5 h-5" />
-            <span className="text-[10px]">إلغاء المهمة</span>
+            <span className="text-[11px] font-bold">إلغاء المهمة</span>
           </Button>
         </div>
 
-        <div className="space-y-3">
-          <label className="text-xs font-bold text-slate-500 block text-center">تأجيل لمدة:</label>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <Button onClick={() => onPostpone(30)} variant="secondary" size="sm">30 دقيقة</Button>
-            <Button onClick={() => onPostpone(60)} variant="secondary" size="sm">ساعة</Button>
-            <Button onClick={() => onPostpone(360)} variant="secondary" size="sm">6 ساعات</Button>
-            <Button onClick={() => onPostpone(1440)} variant="secondary" size="sm">يوم</Button>
-            <Button onClick={() => onPostpone(0)} variant="secondary" size="sm">أخرى</Button>
-            <Button onClick={onClose} variant="slate" size="sm">إغلاق</Button>
+        <div className="space-y-2.5 pt-1">
+          <label className="text-xs font-black text-slate-500 block text-center">تأجيل موعد التذكير لمدة:</label>
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 sm:gap-2">
+            <Button onClick={() => { silenceAlarmSound(); onPostpone(30); }} variant="secondary" size="sm">30 دقيقة</Button>
+            <Button onClick={() => { silenceAlarmSound(); onPostpone(60); }} variant="secondary" size="sm">ساعة</Button>
+            <Button onClick={() => { silenceAlarmSound(); onPostpone(360); }} variant="secondary" size="sm">6 ساعات</Button>
+            <Button onClick={() => { silenceAlarmSound(); onPostpone(1440); }} variant="secondary" size="sm">يوم</Button>
+            <Button onClick={() => { silenceAlarmSound(); onPostpone(0); }} variant="secondary" size="sm">أخرى</Button>
+            <Button onClick={handleCloseModal} variant="slate" size="sm">إغلاق</Button>
           </div>
         </div>
       </div>
@@ -4037,6 +4445,10 @@ export default function App() {
     return saved !== null ? (saved as 'grid' | 'sidebar') : 'grid';
   });
 
+  const [selectedTaskTechnician, setSelectedTaskTechnician] = useState<string | null>(null);
+  const [selectedModelForOptions, setSelectedModelForOptions] = useState<string>('ALL');
+  const [technicianOptions, setTechnicianOptions] = useState<string[]>([]);
+
   useEffect(() => {
     localStorage.setItem('mainMenuLayout', mainMenuLayout);
   }, [mainMenuLayout]);
@@ -4048,6 +4460,25 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('hideMainCards', hideMainCards ? 'true' : 'false');
   }, [hideMainCards]);
+
+  const [flashTaskRange, setFlashTaskRange] = useState<string>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('flashTickerSettings') || '{}');
+      return saved.taskRange || '2days';
+    } catch (e) {
+      return '2days';
+    }
+  });
+
+  useEffect(() => {
+    const handleRangeUpdate = (e: any) => {
+      if (e.detail?.taskRange) {
+        setFlashTaskRange(e.detail.taskRange);
+      }
+    };
+    window.addEventListener('set-flash-task-range', handleRangeUpdate);
+    return () => window.removeEventListener('set-flash-task-range', handleRangeUpdate);
+  }, []);
 
   const [isSidebarActive, setIsSidebarActive] = useState<boolean>(() => {
     return localStorage.getItem('isSidebarActive') === 'true';
@@ -4244,6 +4675,308 @@ export default function App() {
     localStorage.setItem('faisali_custom_alerts', JSON.stringify(customAlerts));
   }, [customAlerts]);
 
+  // تعريف كائن الإشعار المالي
+  interface FinancialNotificationAlert {
+    id: string;
+    type: 'deposit' | 'transfer';
+    partyName: string;
+    amount: number;
+    currency: string;
+    sourceEntity?: string;
+    referenceNumber?: string;
+    accountNumber?: string;
+    rawText: string;
+    timestamp: string;
+    isExecuted: boolean;
+    isDismissed: boolean;
+    executedDetails?: string;
+    selectedAccountId?: number;
+  }
+
+  // إدارة اقتراحات إيداعات وتحويلات البنوك والرسائل الواردة (رسائل SMS وإشعارات البنوك)
+  const [financialAlerts, setFinancialAlerts] = useState<FinancialNotificationAlert[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('faisali_financial_notifications') || '[]');
+    } catch {
+      return [];
+    }
+  });
+
+  const [activeSuggestionAccountInDropdown, setActiveSuggestionAccountInDropdown] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('faisali_financial_notifications', JSON.stringify(financialAlerts));
+    } catch (e) {}
+  }, [financialAlerts]);
+
+  // مزامنة حالة الإشعارات المالية عند معالجتها من المساعد الذكي
+  useEffect(() => {
+    const handleSyncFinancial = () => {
+      try {
+        const stored = JSON.parse(localStorage.getItem('faisali_financial_notifications') || '[]');
+        setFinancialAlerts(stored);
+      } catch (e) {}
+    };
+    window.addEventListener('financial_notifications_updated', handleSyncFinancial);
+    return () => {
+      window.removeEventListener('financial_notifications_updated', handleSyncFinancial);
+    };
+  }, []);
+
+  // قائمة الإشعارات المالية النشطة غير المنفذة (لقائمة الإشعارات الرئيسية وعداد التنبيهات)
+  const activeFinancialAlerts = useMemo(() => {
+    return financialAlerts.filter(a => !a.isDismissed && !a.isExecuted);
+  }, [financialAlerts]);
+
+  // الاستماع لإشعارات البنوك ورسائل SMS الواردة وتمريرها لقائمة التنبيهات والمساعد الذكي
+  useEffect(() => {
+    const handleIncomingFinancial = (e: any) => {
+      const text = e.detail?.text || e.detail?.body || e.detail?.message;
+      if (!text || typeof text !== 'string') return;
+      const voiceSettings = getVoiceSettings();
+      if (voiceSettings.notificationMonitoringEnabled === false) return;
+      const parsed = parseFinancialNotification(text, voiceSettings.allowedNotificationSenders);
+      if (parsed && parsed.isFinancial) {
+        const titleOrPkg = e.detail?.title || e.detail?.package || 'إشعار بنكي / رسالة SMS';
+        const newAlert: FinancialNotificationAlert = {
+          id: `fin-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          type: parsed.type,
+          partyName: parsed.partyName,
+          amount: parsed.amount,
+          currency: parsed.currency || 'RY',
+          sourceEntity: parsed.sourceEntity || titleOrPkg,
+          referenceNumber: parsed.referenceNumber,
+          accountNumber: parsed.accountNumber,
+          rawText: parsed.rawText,
+          timestamp: new Date().toISOString(),
+          isExecuted: false,
+          isDismissed: false
+        };
+
+        setFinancialAlerts(prev => {
+          const exists = prev.some(a => a.rawText === newAlert.rawText && Math.abs(new Date(a.timestamp).getTime() - new Date().getTime()) < 30000);
+          if (exists) return prev;
+          return [newAlert, ...prev];
+        });
+
+        const typeStr = parsed.type === 'deposit' ? 'إيداع وارد 📥' : 'تحويل صادر 📤';
+        toast.success(`${typeStr}: ${parsed.partyName} بمبلغ ${Number(parsed.amount).toLocaleString()} ${parsed.currency}`, {
+          duration: 6000
+        });
+
+        try {
+          speakImportantNotification(
+            parsed.type === 'deposit' 
+              ? `إشعار إيداع جديد من ${parsed.partyName} بمبلغ ${parsed.amount} ${parsed.currency}. اقتراح الإضافة متاح الآن في قائمة الإشعارات ودردشة المساعد.`
+              : `إشعار تحويل جديد لصالح ${parsed.partyName} بمبلغ ${parsed.amount} ${parsed.currency}. اقتراح إنشاء المصروف متاح الآن في قائمة الإشعارات ودردشة المساعد.`
+          );
+        } catch (e) {}
+      }
+    };
+
+    window.addEventListener('bank_notification_received', handleIncomingFinancial);
+    window.addEventListener('incoming_notification', handleIncomingFinancial);
+    window.addEventListener('sms_received', handleIncomingFinancial);
+    return () => {
+      window.removeEventListener('bank_notification_received', handleIncomingFinancial);
+      window.removeEventListener('incoming_notification', handleIncomingFinancial);
+      window.removeEventListener('sms_received', handleIncomingFinancial);
+    };
+  }, []);
+
+  // معالجة وتنفيذ اقتراحات الإيداع والتحويل في قائمة الإشعارات الرئيسية
+  const handleExecuteFinancialAlert = async (
+    alertId: string,
+    actionType: 'cash_account' | 'customer' | 'inventory' | 'account_expense' | 'customer_expense',
+    customAccountId?: number
+  ) => {
+    const alertItem = financialAlerts.find(a => a.id === alertId);
+    if (!alertItem || alertItem.isExecuted) return;
+
+    try {
+      const targetAccId = customAccountId || activeSuggestionAccountInDropdown[alertId] || alertItem.selectedAccountId || (cashAccounts[0]?.id);
+      const targetAcc = cashAccounts.find(a => a.id === targetAccId);
+      const accName = targetAcc ? targetAcc.name : 'الصندوق العام';
+      const amount = alertItem.amount;
+      const currency = alertItem.currency || 'RY';
+      const party = alertItem.partyName;
+      const source = alertItem.sourceEntity ? `(عبر ${alertItem.sourceEntity})` : '';
+      const ref = alertItem.referenceNumber ? `مرجع: ${alertItem.referenceNumber}` : '';
+      let executedDetails = '';
+
+      if (actionType === 'cash_account') {
+        await db.transactions.add({
+          type: 'income',
+          amount: Number(amount),
+          currency: currency as any,
+          date: new Date().toISOString(),
+          description: `إيراد إيداع بنكي/رسالة: ${party} ${source} ${ref}`.trim(),
+          category: 'إيداعات بنكية ومحافظ',
+          customerName: party,
+          cashAccountId: targetAccId,
+          sourceAccount: accName,
+          addedBy: 'مركز الإشعارات (إيداع)'
+        } as any);
+
+        if (targetAccId && targetAcc) {
+          await db.cashAccounts.update(targetAccId, {
+            balance: (targetAcc.balance || 0) + Number(amount),
+            updatedAt: new Date().toISOString()
+          });
+        }
+        executedDetails = `تم قيد إيراد بمبلغ ${Number(amount).toLocaleString()} ${currency} لحساب [${accName}]`;
+        toast.success(executedDetails);
+      } else if (actionType === 'customer') {
+        const allCust = await db.customers.toArray();
+        const matchedCust = allCust.find(c => c.name.toLowerCase().includes(party.toLowerCase()) || party.toLowerCase().includes(c.name.toLowerCase()));
+        const custName = matchedCust ? matchedCust.name : party;
+
+        await db.transactions.add({
+          type: 'income',
+          amount: Number(amount),
+          currency: currency as any,
+          date: new Date().toISOString(),
+          description: `دفعة إيراد من العميل ${custName} ${source} ${ref}`.trim(),
+          category: 'سداد ومستحقات عملاء',
+          customerName: custName,
+          cashAccountId: targetAccId,
+          sourceAccount: accName,
+          addedBy: 'مركز الإشعارات (إيداع)'
+        } as any);
+
+        if (targetAccId && targetAcc) {
+          await db.cashAccounts.update(targetAccId, {
+            balance: (targetAcc.balance || 0) + Number(amount),
+            updatedAt: new Date().toISOString()
+          });
+        }
+
+        if (matchedCust) {
+          const custTasks = await db.tasks.where('customer').equals(custName).toArray();
+          const pendingWithDues = custTasks.filter(t => {
+            const cost = t.cost || 0;
+            const dep = (t.depositHistory && t.depositHistory.length > 0)
+              ? t.depositHistory.reduce((s: number, h: any) => s + (h.amount || 0), 0)
+              : (t.deposit || 0);
+            return (cost - dep) > 0 && t.status !== 'ملغية';
+          });
+          if (pendingWithDues.length > 0) {
+            const targetTask = pendingWithDues[0];
+            const history = targetTask.depositHistory || [];
+            history.push({
+              id: `dep-${Date.now()}`,
+              amount: Number(amount),
+              currency: (targetTask.currency || currency) as any,
+              date: new Date().toISOString(),
+              note: `سداد عبر إشعار إيداع (${source})`
+            });
+            await db.tasks.update(targetTask.id!, {
+              deposit: (targetTask.deposit || 0) + Number(amount),
+              depositHistory: history
+            });
+          }
+        }
+        executedDetails = `تم قيد إيراد وسداد بقيمة ${Number(amount).toLocaleString()} ${currency} لحساب العميل [${custName}] وإيداعها في [${accName}]`;
+        toast.success(executedDetails);
+      } else if (actionType === 'inventory') {
+        await db.transactions.add({
+          type: 'income',
+          amount: Number(amount),
+          currency: currency as any,
+          date: new Date().toISOString(),
+          description: `إيراد مبيعات قطع غيار ومخزون: من ${party} ${source} ${ref}`.trim(),
+          category: 'مبيعات قطع غيار ومخزون',
+          customerName: party,
+          cashAccountId: targetAccId,
+          sourceAccount: accName,
+          addedBy: 'مركز الإشعارات (إيداع)'
+        } as any);
+
+        if (targetAccId && targetAcc) {
+          await db.cashAccounts.update(targetAccId, {
+            balance: (targetAcc.balance || 0) + Number(amount),
+            updatedAt: new Date().toISOString()
+          });
+        }
+        executedDetails = `تم قيد إيراد مبيعات مخزون بمبلغ ${Number(amount).toLocaleString()} ${currency} لحساب [${accName}]`;
+        toast.success(executedDetails);
+      } else if (actionType === 'account_expense') {
+        await db.transactions.add({
+          type: 'expense',
+          amount: Number(amount),
+          currency: currency as any,
+          date: new Date().toISOString(),
+          description: `مصروف تحويل صادر إلى: ${party} ${source} ${ref}`.trim(),
+          category: 'مصروفات وتحويلات نقدية',
+          customerName: party,
+          cashAccountId: targetAccId,
+          sourceAccount: accName,
+          addedBy: 'مركز الإشعارات (تحويل)'
+        } as any);
+
+        if (targetAccId && targetAcc) {
+          await db.cashAccounts.update(targetAccId, {
+            balance: Math.max(0, (targetAcc.balance || 0) - Number(amount)),
+            updatedAt: new Date().toISOString()
+          });
+        }
+        executedDetails = `تم بنجاح إنشاء مصروف بقيمة ${Number(amount).toLocaleString()} ${currency} مخصوماً من [${accName}]`;
+        toast.success(executedDetails);
+      } else if (actionType === 'customer_expense') {
+        await db.transactions.add({
+          type: 'expense',
+          amount: Number(amount),
+          currency: currency as any,
+          date: new Date().toISOString(),
+          description: `مصروف مسدد لـ: ${party} ${source} ${ref}`.trim(),
+          category: 'مستحقات عملاء وموردين',
+          customerName: party,
+          cashAccountId: targetAccId,
+          sourceAccount: accName,
+          addedBy: 'مركز الإشعارات (تحويل)'
+        } as any);
+
+        if (targetAccId && targetAcc) {
+          await db.cashAccounts.update(targetAccId, {
+            balance: Math.max(0, (targetAcc.balance || 0) - Number(amount)),
+            updatedAt: new Date().toISOString()
+          });
+        }
+        executedDetails = `تم إنشاء مصروف مقيد للطرف [${party}] بقيمة ${Number(amount).toLocaleString()} ${currency}`;
+        toast.success(executedDetails);
+      }
+
+      setFinancialAlerts(prev => prev.map(a => a.id === alertId ? { ...a, isExecuted: true, executedDetails } : a));
+      window.dispatchEvent(new CustomEvent('financial_update'));
+      window.dispatchEvent(new CustomEvent('cash_accounts_changed'));
+      window.dispatchEvent(new CustomEvent('transaction_added'));
+    } catch (err) {
+      console.error('Error executing financial alert:', err);
+      toast.error('حدث خطأ أثناء قيد العملية المالية');
+    }
+  };
+
+  const handleDismissFinancialAlert = (alertId: string) => {
+    setFinancialAlerts(prev => prev.map(a => a.id === alertId ? { ...a, isDismissed: true } : a));
+    toast.success('تم إخفاء التنبيه');
+  };
+
+  const handleOpenAlertInAssistant = (alert: FinancialNotificationAlert) => {
+    setShowNotificationsDropdown(false);
+    window.dispatchEvent(new CustomEvent('open_assistant_with_financial_suggestion', {
+      detail: {
+        text: alert.rawText,
+        partyName: alert.partyName,
+        amount: alert.amount,
+        currency: alert.currency,
+        type: alert.type,
+        sourceEntity: alert.sourceEntity,
+        referenceNumber: alert.referenceNumber
+      }
+    }));
+  };
+
   // 1. Critical stock items
   const lowStockItems = useMemo(() => {
     try {
@@ -4258,7 +4991,7 @@ export default function App() {
     }
   }, [inventory, alertsRefreshTrigger]);
 
-  // 2. Urgent task execution alarms (has executionTime, NOT executed, status not terminal, reached/past execTime)
+  // 2. Urgent task execution alarms (has executionTime, NOT executed, status not terminal, active strictly up to execution time; suppressed after execution date/time has passed)
   const taskExecutionAlerts = useMemo(() => {
     const now = new Date();
     try {
@@ -4271,7 +5004,10 @@ export default function App() {
         if (isTerminalStatus) return false;
         
         const execTime = new Date(task.executionTime);
-        return now >= execTime;
+        const diffMinutes = (now.getTime() - execTime.getTime()) / (1000 * 60);
+        // التنبيه ينشط فقط عند اقتراب موعد التنفيذ الموعد بالضبط (خلال نافذة التنفيذ 15 دقيقة قبل الموعد إلى وقت التنفيذ)
+        // ويتم منع التنبيهات والإشعارات تماماً فور تجاوز وقت وتاريخ التنفيذ المضاف عند إنشاء أو تعديل المهمة (diffMinutes > 0)
+        return diffMinutes >= -15 && diffMinutes <= 0;
       }).slice(0, 20);
     } catch {
       return [];
@@ -4392,6 +5128,7 @@ export default function App() {
   // Total unread notifications count
   const totalNotificationsCount = useMemo(() => {
     return (
+      activeFinancialAlerts.length +
       lowStockItems.length + 
       taskExecutionAlerts.length + 
       postponedTaskAlerts.length +
@@ -4401,7 +5138,7 @@ export default function App() {
       staleTasksOverMonthAlerts.length +
       (autoArchiveAlert && !autoArchiveAlert.isDismissed ? 1 : 0)
     );
-  }, [lowStockItems, taskExecutionAlerts, postponedTaskAlerts, unpaidDeliveredAlerts, isMonthlyReviewDue, activeCustomAlertsInDropdown, staleTasksOverMonthAlerts, autoArchiveAlert]);
+  }, [activeFinancialAlerts, lowStockItems, taskExecutionAlerts, postponedTaskAlerts, unpaidDeliveredAlerts, isMonthlyReviewDue, activeCustomAlertsInDropdown, staleTasksOverMonthAlerts, autoArchiveAlert]);
 
   const handleDismissUnpaidAlert = (taskId: number) => {
     try {
@@ -4649,24 +5386,26 @@ export default function App() {
         }
         return name;
       })
-      .join(', ');
+      .join('\n');
   };
 
   const parseSelectedOptions = (formatted: string) => {
     if (!formatted) return [];
-    return formatted.split(', ').flatMap(p => {
+    return formatted.split(/[\n,]\s*/).filter(Boolean).flatMap(p => {
       const match = p.match(/(.*) \((\d+)\)/);
       if (match) {
-        const name = match[1];
+        const name = match[1].trim();
         const count = parseInt(match[2]);
         return Array(count).fill(name);
       }
-      return [p];
+      return [p.trim()];
     });
   };
   const isTaskMatchingSearchQuery = (t: Task, query: string) => {
     if (!query || !query.trim()) return true;
     const q = query.toLowerCase().trim();
+    const stdQ = toStandardDigits(q);
+    const taskIdStr = t.id ? String(t.id) : '';
     const cust = (t.customer || '').toLowerCase();
     const brand = (t.brand || '').toLowerCase();
     const device = (t.deviceType || '').toLowerCase();
@@ -4676,11 +5415,28 @@ export default function App() {
     const serial = ((t as any).serialNumber || '').toLowerCase();
     const phones = t.customerPhones ? t.customerPhones.join(' ').toLowerCase() : '';
 
-    const matchingCustomer = customers.find((c: any) => c.name.toLowerCase() === cust || (c.phone && c.phone.includes(q)) || (c.phones && c.phones.some((p: string) => p.includes(q))));
-    const customerPhoneMatch = matchingCustomer && ((matchingCustomer.phone && matchingCustomer.phone.toLowerCase().includes(q)) || (matchingCustomer.phones && matchingCustomer.phones.some((p: string) => p.toLowerCase().includes(q))));
+    const matchingCustomer = customers.find((c: any) => 
+      c.name.toLowerCase() === cust || 
+      (c.phone && (c.phone.includes(q) || c.phone.includes(stdQ))) || 
+      (c.phones && c.phones.some((p: string) => p.includes(q) || p.includes(stdQ)))
+    );
+    const customerPhoneMatch = matchingCustomer && (
+      (matchingCustomer.phone && (matchingCustomer.phone.toLowerCase().includes(q) || matchingCustomer.phone.includes(stdQ))) || 
+      (matchingCustomer.phones && matchingCustomer.phones.some((p: string) => p.toLowerCase().includes(q) || p.includes(stdQ)))
+    );
 
-    const matchingInventory = inventory.find((i: any) => i.name.toLowerCase().includes(q) || i.category.toLowerCase().includes(q) || i.code.toLowerCase().includes(q));
-    const inventoryMatch = matchingInventory && (device.includes(matchingInventory.name.toLowerCase()) || brand.includes(matchingInventory.name.toLowerCase()) || issue.includes(matchingInventory.name.toLowerCase()) || notes.includes(matchingInventory.name.toLowerCase()));
+    const matchingInventory = inventory.find((i: any) => 
+      i.name.toLowerCase().includes(q) || 
+      i.category.toLowerCase().includes(q) || 
+      i.code.toLowerCase().includes(q) ||
+      (i.code && i.code.includes(stdQ))
+    );
+    const inventoryMatch = matchingInventory && (
+      device.includes(matchingInventory.name.toLowerCase()) || 
+      brand.includes(matchingInventory.name.toLowerCase()) || 
+      issue.includes(matchingInventory.name.toLowerCase()) || 
+      notes.includes(matchingInventory.name.toLowerCase())
+    );
 
     return (
       cust.includes(q) ||
@@ -4690,7 +5446,12 @@ export default function App() {
       issue.includes(q) ||
       notes.includes(q) ||
       serial.includes(q) ||
+      serial.includes(stdQ) ||
       phones.includes(q) ||
+      phones.includes(stdQ) ||
+      taskIdStr === q ||
+      taskIdStr === stdQ ||
+      taskIdStr.includes(stdQ) ||
       Boolean(customerPhoneMatch) ||
       Boolean(inventoryMatch)
     );
@@ -4711,21 +5472,36 @@ export default function App() {
     return 9;
   };
 
+  const isTaskArchivedOrCompleted = (t: Task | null | undefined): boolean => {
+    if (!t) return false;
+    if (t.isArchived) return true;
+    const key = getStatusKeyFromLabel(t.status) || t.status;
+    return key === 'archived' || 
+           key === 'completed' || 
+           t.status === 'archived' || 
+           t.status === 'منتهية' || 
+           t.status === 'المهمة منتهية (مؤرشفة)' || 
+           t.status === 'completed' || 
+           t.status === 'تم التسليم' || 
+           t.status === 'مسلمة' || 
+           t.status === 'مكتملة ومسلمة';
+  };
+
   const isTaskMatchingFilter = (t: Task, filter: string) => {
     if (!filter || filter === 'all' || filter === 'عرض الكل') return true;
 
     // الخيار الأول: حسب الحالة (يعرض كل المهام النشطة مع فرز معلقة -> تم الفحص والابلاغ -> جاري التنفيذ -> ملغية -> تمت الصيانة -> للتسليم -> تم التسليم -> منتهية)
     if (filter === 'by-status' || filter === 'حسب الحالة') {
-      return !t.isArchived && t.status !== 'archived';
+      return !isTaskArchivedOrCompleted(t);
     }
 
     if (filter === 'active' || filter === 'المهام النشطة') {
-      return !t.isArchived && t.status !== 'archived';
+      return !isTaskArchivedOrCompleted(t);
     }
 
     // مهام اليوم وغداً في خيار واحد
     if (filter === 'today-tomorrow' || filter === 'مهام اليوم وغداً') {
-      if (t.isArchived || t.status === 'archived') return false;
+      if (isTaskArchivedOrCompleted(t)) return false;
       const now = new Date();
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
       const twoDaysEnd = todayStart + 48 * 60 * 60 * 1000;
@@ -4746,7 +5522,7 @@ export default function App() {
     // المهام التي تجاوزت شهر بدون تعديل
     if (filter === 'inactive-month' || filter === 'تجاوزت شهر دون تعديل' || filter === 'المهام التي تجاوزت شهر بدون تعديل') {
       const isTerminalStatus = ['completed', 'cancelled-delivered', 'archived', 'ملغية', 'إلغاء المهمة', 'maintenance-done', 'reported-cancelled'].includes(t.status);
-      if (isTerminalStatus || t.isArchived) return false;
+      if (isTerminalStatus || isTaskArchivedOrCompleted(t)) return false;
       const lastChange = new Date(t.updatedAt || t.createdAt);
       const diffDays = (new Date().getTime() - lastChange.getTime()) / (1000 * 60 * 60 * 24);
       return diffDays >= 30;
@@ -4799,7 +5575,7 @@ export default function App() {
       return tKey === 'completed' || ['completed', 'تم التسليم', 'مكتملة ومسلمة', 'مسلمة'].includes(t.status);
     }
     if (filter === 'archived' || filter === 'منتهية' || filter === 'المهمة منتهية (مؤرشفة)') {
-      return tKey === 'archived' || t.status === 'archived' || t.status === 'منتهية' || t.isArchived;
+      return isTaskArchivedOrCompleted(t);
     }
 
     if (filter === 'next-24h' || filter === 'تنفيذ خلال 24 ساعة' || filter === 'تنفيذ خلال الـ 24 ساعة القادمة') {
@@ -4970,19 +5746,34 @@ export default function App() {
   const [isVoiceSearchModalOpen, setIsVoiceSearchModalOpen] = useState(false);
   const [voiceLang, setVoiceLang] = useState('ar-SA');
   const recognitionRef = useRef<any>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const latestSpokenSearchRef = useRef<string>('');
+
+  const applySpokenTextToSearch = (text: string) => {
+    const clean = (text || '').trim();
+    if (!clean) return;
+    setSearchQuery(clean);
+    setIsSearchFocused(true);
+    setKeepSearchOpen(true);
+    if (searchInputRef.current) {
+      setNativeInputValue(searchInputRef.current, clean);
+    }
+  };
 
   const stopVoiceSearch = () => {
     stopUnifiedSpeechRecognition();
+    stopSpeech().catch(() => {});
+    if (latestSpokenSearchRef.current) {
+      applySpokenTextToSearch(latestSpokenSearchRef.current);
+    }
     setIsListeningVoice(false);
     setIsVoiceSearchModalOpen(false);
   };
 
   const handleVoiceSearchSuccess = (transcript: string) => {
-    if (transcript && transcript.trim()) {
-      const clean = transcript.trim();
-      setSearchQuery(clean);
-      setIsSearchFocused(true);
-      setKeepSearchOpen(true);
+    const text = transcript || latestSpokenSearchRef.current;
+    if (text && text.trim()) {
+      applySpokenTextToSearch(text);
       try {
         if (navigator.vibrate) navigator.vibrate([25, 40]);
       } catch (e) {}
@@ -4992,10 +5783,16 @@ export default function App() {
   };
 
   const startVoiceSearch = async () => {
+    // إيقاف تحويل النص لكلام فوراً عند النقر على الميكروفون
+    stopSpeech().catch(() => {});
+
     if (isListeningVoice) {
+      // عند النقر مجدداً على أيقونة الميكروفون: إيقاف البحث الصوتي وإيقاف تحويل النص لكلام
       stopVoiceSearch();
       return;
     }
+
+    latestSpokenSearchRef.current = '';
 
     // إيقاف أي أصوات ناطقة سابقة لتفريغ الميكروفون
     try {
@@ -5026,24 +5823,31 @@ export default function App() {
         },
         onPartialResult: (liveText: string) => {
           if (liveText && liveText.trim()) {
-            setSearchQuery(liveText.trim());
-            setIsSearchFocused(true);
-            setKeepSearchOpen(true);
+            latestSpokenSearchRef.current = liveText.trim();
+            applySpokenTextToSearch(liveText.trim());
           }
         },
         onResult: (text: string) => {
           handleVoiceSearchSuccess(text);
         },
         onError: (errMsg: string) => {
-          setIsListeningVoice(false);
-          setIsVoiceSearchModalOpen(false);
-          if (errMsg && errMsg !== 'تم إلغاء الاستماع' && errMsg !== 'cancelled' && errMsg !== 'no_match') {
-            toast.error(errMsg, { duration: 2500 });
+          if (latestSpokenSearchRef.current) {
+            handleVoiceSearchSuccess(latestSpokenSearchRef.current);
+          } else {
+            setIsListeningVoice(false);
+            setIsVoiceSearchModalOpen(false);
+            if (errMsg && errMsg !== 'تم إلغاء الاستماع' && errMsg !== 'cancelled' && errMsg !== 'no_match') {
+              toast.error(errMsg, { duration: 2500 });
+            }
           }
         },
         onEnd: () => {
-          setIsListeningVoice(false);
-          setIsVoiceSearchModalOpen(false);
+          if (latestSpokenSearchRef.current) {
+            handleVoiceSearchSuccess(latestSpokenSearchRef.current);
+          } else {
+            setIsListeningVoice(false);
+            setIsVoiceSearchModalOpen(false);
+          }
         }
       });
     } catch (err: any) {
@@ -5298,6 +6102,12 @@ export default function App() {
   const [storageLocationOptions, setStorageLocationOptions] = useState<string[]>([]);
   const [isAppSettingsModalOpen, setIsAppSettingsModalOpen] = useState(false);
   const [isUiCustomizationModalOpen, setIsUiCustomizationModalOpen] = useState(false);
+  const [isFontSettingsModalOpen, setIsFontSettingsModalOpen] = useState(false);
+
+  useEffect(() => {
+    const cleanup = initGlobalHindiDigitsConverter();
+    return () => cleanup();
+  }, []);
   const [isLivePreviewMinimized, setIsLivePreviewMinimized] = useState(false);
   const [isTaskInterfaceSettingsModalOpen, setIsTaskInterfaceSettingsModalOpen] = useState(false);
   const [isWindowTitlesModalOpen, setIsWindowTitlesModalOpen] = useState(false);
@@ -5306,6 +6116,51 @@ export default function App() {
   const [isFloatingModalOpen, setIsFloatingModalOpen] = useState(false);
   const [isAssistantMenuOpen, setIsAssistantMenuOpen] = useState(false);
   const [isAssistantUnlinked, setIsAssistantUnlinked] = useState(false);
+  const [isMainScreenExited, setIsMainScreenExited] = useState(false);
+  const [voiceSettingsState, setVoiceSettingsState] = useState(() => getVoiceSettings());
+
+  useEffect(() => {
+    const handleVoiceSettingsChange = (e: any) => {
+      setVoiceSettingsState(e?.detail || getVoiceSettings());
+    };
+    window.addEventListener('voice_settings_changed', handleVoiceSettingsChange);
+    return () => window.removeEventListener('voice_settings_changed', handleVoiceSettingsChange);
+  }, []);
+
+  useEffect(() => {
+    const handleExitToFloating = () => setIsMainScreenExited(true);
+    const handleFocusMainApp = () => setIsMainScreenExited(false);
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        setIsMainScreenExited(true);
+      }
+    };
+    window.addEventListener('exit_to_floating_assistant', handleExitToFloating);
+    window.addEventListener('focus_main_app', handleFocusMainApp);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    let capAppListener: any = null;
+    const initCapListener = async () => {
+      try {
+        const { App: CapApp } = await import('@capacitor/app');
+        capAppListener = await CapApp.addListener('appStateChange', (state) => {
+          if (!state.isActive) {
+            setIsMainScreenExited(true);
+          }
+        });
+      } catch (e) {}
+    };
+    initCapListener();
+
+    return () => {
+      window.removeEventListener('exit_to_floating_assistant', handleExitToFloating);
+      window.removeEventListener('focus_main_app', handleFocusMainApp);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (capAppListener && capAppListener.remove) {
+        capAppListener.remove();
+      }
+    };
+  }, []);
   const [isGlobalVoiceSettingsOpen, setIsGlobalVoiceSettingsOpen] = useState(false);
   const [floatingModalTab, setFloatingModalTab] = useState<'notes' | 'reminders' | 'history'>('notes');
   const auditLogs = useLiveQuery(() => db.auditLogs.orderBy('timestamp').reverse().toArray()) || [];
@@ -6161,6 +7016,7 @@ export default function App() {
   }, [reminders]);
 
   const [uiSettings, setUiSettings] = useState(DEFAULT_UI_SETTINGS);
+  const [isToolsRevealed, setIsToolsRevealed] = useState(false);
 
 
 
@@ -6505,6 +7361,49 @@ export default function App() {
   const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false);
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
   const [transactionModalCurrency, setTransactionModalCurrency] = useState<Currency>('RY');
+  const [transactionAmountInput, setTransactionAmountInput] = useState<string>('');
+  const [transactionCashAccountId, setTransactionCashAccountId] = useState<number | ''>('');
+  const [isDailyBondPreferencesModalOpen, setIsDailyBondPreferencesModalOpen] = useState(false);
+
+  // قائمة الصناديق والخزائن والحسابات النقدية السائلة (باستثناء الحسابات العامة المستقلة)
+  const liquidCashAccounts = useMemo(() => {
+    const list = (cashAccounts || []).filter(a => a.type !== 'general');
+    if (list.length === 0 && cashAccounts.length > 0) return cashAccounts;
+    return list;
+  }, [cashAccounts]);
+
+  // صندوق النقد اليومي الافتراضي لعمليات الصرف والقبض
+  const defaultCashbox = useMemo(() => {
+    return liquidCashAccounts.find(a => a.isDefault && a.type !== 'general') ||
+           liquidCashAccounts.find(a => a.type === 'cashbox') ||
+           liquidCashAccounts.find(a => a.type === 'vault') ||
+           liquidCashAccounts[0] ||
+           cashAccounts[0];
+  }, [liquidCashAccounts, cashAccounts]);
+
+  const handleApplyDailyBondShortcut = (shortcut: DailyBondShortcut) => {
+    setTransactionType(shortcut.type);
+    setEditingId(null);
+    setTransactionDescription(shortcut.description || shortcut.title);
+    setTransactionCategory(shortcut.category || '');
+    setTransactionCustomerName(shortcut.targetName || '');
+    setTransactionModalCurrency(shortcut.currency || systemCurrency);
+    setTransactionAmountInput(shortcut.defaultAmount ? String(shortcut.defaultAmount) : '');
+    setTransactionCashAccountId(defaultCashbox?.id || '');
+    setIsTransactionModalOpen(true);
+  };
+
+  const openAddTransactionModal = (type: 'income' | 'expense', initialTargetName?: string, initialCategory?: string, initialDesc?: string, initialAmount?: number, initialCashAccountId?: number) => {
+    setTransactionType(type);
+    setEditingId(null);
+    setTransactionDescription(initialDesc || '');
+    setTransactionCategory(initialCategory || '');
+    setTransactionCustomerName(initialTargetName || '');
+    setTransactionAmountInput(initialAmount ? String(initialAmount) : '');
+    setTransactionModalCurrency(systemCurrency || 'RY');
+    setTransactionCashAccountId(initialCashAccountId || defaultCashbox?.id || '');
+    setIsTransactionModalOpen(true);
+  };
   const [taskFormCurrency, setTaskFormCurrency] = useState<Currency>('RY');
   const [depositFormCurrency, setDepositFormCurrency] = useState<Currency>('RY');
   
@@ -6514,10 +7413,13 @@ export default function App() {
   const [isUserManagementModalOpen, setIsUserManagementModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isExitConfirmModalOpen, setIsExitConfirmModalOpen] = useState(false);
+  const [isOmniPreviewModalOpen, setIsOmniPreviewModalOpen] = useState(false);
   const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
   const [isDefaultsModalOpen, setIsDefaultsModalOpen] = useState(false);
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [backupModalTab, setBackupModalTab] = useState<'files' | 'export'>('files');
+  const [isDataHealthModalOpen, setIsDataHealthModalOpen] = useState(false);
 
   const [isSystemResetModalOpen, setIsSystemResetModalOpen] = useState(false);
   const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
@@ -6528,6 +7430,7 @@ export default function App() {
     customers: true,
     inventory: true,
     transactions: true,
+    accounts: true,
     settings: true,
     dropdowns: true,
     media: true,
@@ -6539,6 +7442,7 @@ export default function App() {
     customers: true,
     inventory: true,
     transactions: true,
+    accounts: true,
     settings: true,
     dropdowns: true,
     users: true,
@@ -6567,7 +7471,7 @@ export default function App() {
   const [tasksTabMode, setTasksTabMode] = useState<'active' | 'archived'>('active');
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
   const [dashboardViewType, setDashboardViewType] = useState<'all' | 'day' | 'week' | 'month' | 'year'>('all');
-  const [dashboardActiveTab, setDashboardActiveTab] = useState<'tasks' | 'dues' | 'income' | 'all_transactions' | 'inventory' | 'reports' | 'customers' | 'accounts'>('tasks');
+  const [dashboardActiveTab, setDashboardActiveTab] = useState<'tasks' | 'dues' | 'income' | 'all_transactions' | 'inventory' | 'reports' | 'customers' | 'accounts' | 'completion_stats'>('tasks');
   const [transactionsUserFilter, setTransactionsUserFilter] = useState<string>('all');
   const [isDashboardTabDropdownOpen, setIsDashboardTabDropdownOpen] = useState(false);
   const [isTaskDisplayConfigModalOpen, setIsTaskDisplayConfigModalOpen] = useState(false);
@@ -7218,7 +8122,7 @@ export default function App() {
     setReportEndDate(getLocalDateString(end));
   }, [reportPeriod]);
 
-  const [reportClass, setReportClass] = useState<'all' | 'customer' | 'account' | 'model' | 'type' | 'financial' | 'inventory' | 'customers_list' | 'inventory_list' | 'system_stats' | 'customer_stats' | 'analytics_ranking' | 'sale' | 'purchase' | 'inactive_week' | 'inactive_month' | 'customer_dues'>('all');
+  const [reportClass, setReportClass] = useState<'all' | 'customer' | 'account' | 'model' | 'type' | 'financial' | 'inventory' | 'customers_list' | 'inventory_list' | 'system_stats' | 'customer_stats' | 'analytics_ranking' | 'sale' | 'purchase' | 'inactive_week' | 'inactive_month' | 'customer_dues' | 'task_completion_rates'>('all');
   const [isAccountReportModalOpen, setIsAccountReportModalOpen] = useState(false);
   const [selectedAccountIdForReport, setSelectedAccountIdForReport] = useState<number | null>(null);
   const [analyticsRankType, setAnalyticsRankType] = useState<'days_revenue' | 'days_count' | 'months_revenue' | 'months_count' | 'years_revenue' | 'years_count' | 'device_types' | 'device_brands' | 'categories' | 'customers'>('days_revenue');
@@ -7311,6 +8215,10 @@ export default function App() {
   const canChangeFilters = !currentUser || currentUser.role === 'admin' || currentUser.permissions?.canChangeFilters !== false;
   const canViewTaskStatuses = !currentUser || currentUser.role === 'admin' || currentUser.permissions?.canViewTaskStatuses !== false;
   const canEditOptions = !currentUser || currentUser.role === 'admin' || currentUser.permissions?.canEditOptions !== false;
+  const canUseVoiceAssistant = !currentUser || currentUser.role === 'admin' || currentUser.permissions?.canUseVoiceAssistant !== false;
+  const canUseTools = !currentUser || currentUser.role === 'admin' || currentUser.permissions?.canUseTools !== false;
+  const canUseFlashInterface = !currentUser || currentUser.role === 'admin' || currentUser.permissions?.canUseFlashInterface !== false;
+  const canManageQuickNotes = !currentUser || currentUser.role === 'admin' || currentUser.permissions?.canManageQuickNotes !== false;
 
   const filteredSettingsItems = useMemo(() => {
     const query = settingsSearchQuery.trim().toLowerCase();
@@ -7318,10 +8226,39 @@ export default function App() {
     
     return [
       {
+        title: "إعدادات المساعد",
+        description: "ضبط محرك الذكاء الاصطناعي (Gemini AI)، نطق وقراءة التنبيهات، مفتاح Gemini API، الرسالة الترحيبية وتخصيص المساعد.",
+        tags: ["إعدادات المساعد", "اعدادات المساعد", "مساعد", "المساعد", "صوت", "صوتي", "الصوتي", "ذكاء", "ذكاء اصطناعي", "جيمني", "gemini", "assistant", "voice", "ميكروفون", "سماعة", "نطق", "كلام"],
+        icon: (
+          <div className="p-1 rounded-lg bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-xs">
+            <Sparkles className="w-5 h-5" />
+          </div>
+        ),
+        onClick: () => { setIsGlobalVoiceSettingsOpen(true); }
+      },
+      {
+        title: "إعدادات الخط والحجم والأرقام (التبويبات والقوائم والتقارير والمدخلات)",
+        description: "تخصيص حجم ونوع الخط لكافة عناصر التطبيق (التبويبات الرئيسية، القوائم، التفاصيل، التقارير، النصوص المدخلة) ومعالجة قبول الأرقام العربي والهندي والإنجليزي.",
+        tags: ["خط", "خطوط", "حجم الخط", "نوع الخط", "أرقام", "ارقام", "الأرقام", "الارقام", "الهندية", "العربية", "الانجليزية", "123", "١٢٣", "التبويبات", "القوائم", "التقارير", "المدخلات", "الكيبورد", "font", "size", "numbers"],
+        icon: <Type className="w-5 h-5 text-sky-600" />,
+        onClick: () => { setIsFontSettingsModalOpen(true); }
+      },
+      {
+        title: "إعدادات الواجهة الفلاشية وعرض المهام",
+        description: "التحكم في ظهور الواجهة الفلاشية (الشريط الفلاشي) وتغيير نطاق عرض المهام لليوم القادم أو اليومين أو الثلاث أو الأربع أو الأسبوع أو الشهر.",
+        tags: ["فلاش", "فلاشية", "الواجهة الفلاشية", "الشريط الفلاشي", "شريط المهام", "عرض المهام", "نطاق", "اليوم القادم", "اليومين", "الثلاثة أيام", "الأربعة أيام", "الأسبوع", "الشهر", "flash", "ticker", "task range"],
+        icon: <Zap className="w-5 h-5 text-amber-500" />,
+        onClick: () => { setIsTaskInterfaceSettingsModalOpen(true); }
+      },
+      {
         title: "إدارة النسخ الاحتياطي والاستعادة",
         description: "تحديد الأقسام وحفظ البيانات محلياً أو رفعها للسحابة، واستعادة النسخ السابقة (محلي/سحابي).",
         tags: ["استيراد", "ملف", "ملفات", "استعادة", "نسخة احتياطية", "تصدير", "درايف", "جوجل", "سحابي", "drive", "google", "cloud", "restore", "import", "file", "export", "backup"],
-        icon: <Database className="w-5 h-5 text-blue-600" />,
+        icon: (
+          <div className="p-1 rounded-lg bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+            <Database className="w-5 h-5 stroke-[2.5]" />
+          </div>
+        ),
         onClick: () => { openBackupModal('export'); }
       },
       {
@@ -7428,6 +8365,7 @@ export default function App() {
   }, [settingsSearchQuery, currentUser]);
 
   const isAnySubModalOpen = Boolean(
+    isGlobalVoiceSettingsOpen ||
     isUiCustomizationModalOpen || 
     isTaskInterfaceSettingsModalOpen || 
     isTaskDisplayConfigModalOpen || 
@@ -7715,7 +8653,11 @@ export default function App() {
             canChangeSettings: true,
             canViewTaskStatuses: true,
             canExportData: true,
-            canImportData: true
+            canImportData: true,
+            canUseVoiceAssistant: true,
+            canUseTools: true,
+            canUseFlashInterface: true,
+            canManageQuickNotes: true
           },
           createdAt: new Date().toISOString()
         });
@@ -7757,11 +8699,12 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isLoginModalOpen || loginView !== 'keypad') return;
       
-      // Support keyboard entry of pin
-      if (e.key >= '0' && e.key <= '9') {
+      // Support keyboard entry of pin (including Eastern Arabic / Hindi digits ٠١٢٣٤٥٦٧٨٩)
+      const digitKey = toStandardDigits(e.key);
+      if (digitKey >= '0' && digitKey <= '9') {
         setLoginPin(prev => {
           if (prev.length < 4) {
-            const newVal = prev + e.key;
+            const newVal = prev + digitKey;
             if (newVal.length === 4) {
               setTimeout(() => handleLogin(newVal), 150);
             }
@@ -7835,8 +8778,16 @@ export default function App() {
       else if (viewingImagesTask) { setViewingImagesTask(null); handled = true; }
       else if (viewingImagesInventoryItem) { setViewingImagesInventoryItem(null); handled = true; }
       else if (quickTransaction && quickTransaction.show) { setQuickTransaction(null); handled = true; }
+      else if (isExitConfirmModalOpen) { setIsExitConfirmModalOpen(false); handled = true; }
       else if (isLogoutConfirmOpen) { setIsLogoutConfirmOpen(false); handled = true; }
       else if (isExportModalOpen) { setIsExportModalOpen(false); handled = true; }
+      else if (isExportSettingsModalOpen) { setIsExportSettingsModalOpen(false); handled = true; }
+      else if (isFontSettingsModalOpen) { setIsFontSettingsModalOpen(false); handled = true; }
+      else if (isCustomerFinancialAccountModalOpen) { setIsCustomerFinancialAccountModalOpen(false); handled = true; }
+      else if (isAccountReportModalOpen) { setIsAccountReportModalOpen(false); handled = true; }
+      else if (isOmniPreviewModalOpen) { setIsOmniPreviewModalOpen(false); handled = true; }
+      else if (isReportTemplateModalOpen) { setIsReportTemplateModalOpen(false); handled = true; }
+      else if (isTaskFormatModalOpen) { setIsTaskFormatModalOpen(false); handled = true; }
       else if (isPhoneManagerOpen) { setIsPhoneManagerOpen(false); handled = true; }
       else if (isCallSelectorOpen) { setIsCallSelectorOpen(false); handled = true; }
       else if (isWhatsAppShareModalOpen) { setIsWhatsAppShareModalOpen(false); handled = true; }
@@ -7844,7 +8795,7 @@ export default function App() {
       else if (isTemplateSettingsOpen) { setIsTemplateSettingsOpen(false); handled = true; }
       else if (isCopySettingsOpen) { setIsCopySettingsOpen(false); handled = true; }
       else if (isDepositHistoryModalOpen) { setIsDepositHistoryModalOpen(false); handled = true; }
-            else if (isWindowTitlesModalOpen) { setIsWindowTitlesModalOpen(false); setIsUiCustomizationModalOpen(true); handled = true; }
+      else if (isWindowTitlesModalOpen) { setIsWindowTitlesModalOpen(false); setIsUiCustomizationModalOpen(true); handled = true; }
       else if (isStatusColorsModalOpen) { setIsStatusColorsModalOpen(false); setIsUiCustomizationModalOpen(true); handled = true; }
       else if (isMainButtonsModalOpen) { setIsMainButtonsModalOpen(false); setIsUiCustomizationModalOpen(true); handled = true; }
       else if (isUiCustomizationModalOpen) { setIsUiCustomizationModalOpen(false); setIsSettingsModalOpen(true); handled = true; }
@@ -7859,6 +8810,7 @@ export default function App() {
       else if (isReportSchedulingModalOpen) { setIsReportSchedulingModalOpen(false); setIsSettingsModalOpen(true); handled = true; }
       else if (isSystemResetModalOpen) { setIsSystemResetModalOpen(false); setIsSettingsModalOpen(true); handled = true; }
       else if (isAboutModalOpen) { setIsAboutModalOpen(false); setIsSettingsModalOpen(true); handled = true; }
+      else if (isGlobalVoiceSettingsOpen) { setIsGlobalVoiceSettingsOpen(false); setIsSettingsModalOpen(true); handled = true; }
       else if (isSettingsModalOpen) { setIsSettingsModalOpen(false); handled = true; }
       else if (isLoginModalOpen && loginView === 'users') { 
         setLoginView('keypad'); 
@@ -7877,8 +8829,8 @@ export default function App() {
         handled = true; 
       }
       else {
-        // Single click: Show exit confirmation
-        setIsLogoutConfirmOpen(true);
+        // Single click: Show exit confirmation modal
+        setIsExitConfirmModalOpen(true);
         handled = true;
       }
 
@@ -8028,16 +8980,28 @@ export default function App() {
   const executionTimeRef = useRef<HTMLInputElement>(null);
   const depositRef = useRef<HTMLInputElement>(null);
 
+  // مزامنة حية وفورية: إذا كانت نافذة المهمة مفتوحة لتعديل مهمة معينة، وتم تعديل حالتها أو وقت تنفيذها من الواجهة الفلاشية، يتم تحديث الحالة فوراً
+  useEffect(() => {
+    if (isTaskModalOpen && editingId) {
+      const liveTask = tasks.find(t => t.id === editingId);
+      if (liveTask) {
+        if (liveTask.status && liveTask.status !== taskStatus) {
+          setTaskStatus(liveTask.status);
+        }
+        if (liveTask.executionTime && executionTimeRef.current) {
+          const formattedLocal = formatToDateTimeLocal(liveTask.executionTime);
+          if (formattedLocal && executionTimeRef.current.value !== formattedLocal) {
+            executionTimeRef.current.value = formattedLocal;
+          }
+        }
+      }
+    }
+  }, [tasks, isTaskModalOpen, editingId, taskStatus]);
+
   const setQuickTime = (minutes: number) => {
     if (executionTimeRef.current) {
-      const target = new Date();
-      target.setMinutes(target.getMinutes() + minutes);
-      const year = target.getFullYear();
-      const month = String(target.getMonth() + 1).padStart(2, '0');
-      const day = String(target.getDate()).padStart(2, '0');
-      const hours = String(target.getHours()).padStart(2, '0');
-      const mins = String(target.getMinutes()).padStart(2, '0');
-      executionTimeRef.current.value = `${year}-${month}-${day}T${hours}:${mins}`;
+      const target = new Date(Date.now() + minutes * 60 * 1000);
+      executionTimeRef.current.value = formatToDateTimeLocal(target);
     }
   };
 
@@ -8137,12 +9101,7 @@ export default function App() {
       if (type.endsWith('4pm')) target.setHours(16, 0, 0, 0);
       else if (type.endsWith('9pm')) target.setHours(21, 0, 0, 0);
       
-      const year = target.getFullYear();
-      const month = String(target.getMonth() + 1).padStart(2, '0');
-      const day = String(target.getDate()).padStart(2, '0');
-      const hours = String(target.getHours()).padStart(2, '0');
-      const mins = String(target.getMinutes()).padStart(2, '0');
-      executionTimeRef.current.value = `${year}-${month}-${day}T${hours}:${mins}`;
+      executionTimeRef.current.value = formatToDateTimeLocal(target);
     }
   };
 
@@ -8469,6 +9428,22 @@ export default function App() {
       return text.substring(start, end).trim();
     };
 
+    // الحفاظ على أي نص أولي مكتوب قبل البادئات
+    let leadText = '';
+    let minPrefixIdx = -1;
+    Object.values(prefixes).forEach(p => {
+      const idx = current.indexOf(p);
+      if (idx !== -1 && (minPrefixIdx === -1 || idx < minPrefixIdx)) {
+        minPrefixIdx = idx;
+      }
+    });
+
+    if (minPrefixIdx > 0) {
+      leadText = current.substring(0, minPrefixIdx).trim();
+    } else if (minPrefixIdx === -1 && current.trim()) {
+      leadText = current.trim();
+    }
+
     let devices = extractPart(current, 'devices');
     let issue = extractPart(current, 'issue');
     let inspection = extractPart(current, 'inspection');
@@ -8477,10 +9452,13 @@ export default function App() {
     let status = extractPart(current, 'status');
     let storage = extractPart(current, 'storage');
 
-    // إذا كان هناك نص مكتوب يدوياً دون بادئات، نحافظ عليه كوصف للمشكلة
-    const hasAnyPrefix = Object.values(prefixes).some(p => current.includes(p));
-    if (!hasAnyPrefix && current.trim() && !issue) {
-      issue = current.trim();
+    // دمج النص الأولي غير المعلم مع وصف المشكلة لضمان عدم فقده مطلقاً
+    if (leadText) {
+      if (issue) {
+        if (!issue.includes(leadText)) issue = `${leadText}\n[+] ${issue}`;
+      } else {
+        issue = leadText;
+      }
     }
 
     if (type === 'devices') {
@@ -8488,7 +9466,7 @@ export default function App() {
     } else if (type === 'issue') {
       if (boldTextStr) {
         if (issue && !replaceStatus) {
-          issue += `       [+] ${boldTextStr}`;
+          issue += `\n${boldTextStr}`;
         } else {
           issue = boldTextStr;
         }
@@ -8496,14 +9474,14 @@ export default function App() {
     } else if (type === 'inspection') {
       const entry = `${boldTextStr}${timestamp}`;
       if (inspection && !replaceStatus) {
-        inspection += `       [+] ${entry}`;
+        inspection += `\n${entry}`;
       } else {
         inspection = entry;
       }
     } else if (type === 'account') {
       const entry = `${boldTextStr}${timestamp}`;
       if (account && !replaceStatus) {
-        account += `       + ${entry}`;
+        account += `\n${entry}`;
       } else {
         account = entry;
       }
@@ -8512,14 +9490,14 @@ export default function App() {
     } else if (type === 'status') {
       if (boldTextStr && boldTextStr !== 'غير محدد') {
         const entry = `${boldTextStr}${timestamp}`;
-        if (status && !replaceStatus) status += `       ← ${entry}`;
+        if (status && !replaceStatus) status += `\n${entry}`;
         else status = entry;
       }
     } else if (type === 'storage') {
       storage = boldTextStr;
     } else if (type === 'deposit') {
       const entry = `مبلغ: ${boldTextStr} ${curr}${timestamp}`;
-      if (account && !replaceStatus) account += `       + ${entry}`;
+      if (account && !replaceStatus) account += `\n${entry}`;
       else account = entry;
     }
 
@@ -8566,22 +9544,34 @@ export default function App() {
             status !== 'maintenance-done' &&
             status !== 'reported-cancelled' &&
             status !== 'cancelled-delivered') {
-          const execTime = new Date(task.executionTime);
-          if (now >= execTime) {
-            setActiveAlarmTask(task);
-            // Deactivate alarm for this task so it doesn't pop up again immediately
-            db.tasks.update(task.id!, { isAlarmActive: false });
-            
-            // Play notification sound
-            try {
-              const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
-              audio.play().catch(e => console.warn('Audio play failed:', e));
-            } catch (e) {
-              console.warn('Audio creation failed:', e);
-            }
+          const execTime = parseExecutionTimeToDate(task.executionTime);
+          if (execTime) {
+            const diffMs = now.getTime() - execTime.getTime();
+            // ظهور التنبيه فقط في الوقت المحدد للتنفيذ بالضبط (خلال دقيقتين من وقت التنفيذ)
+            if (diffMs >= 0 && diffMs <= 120000) {
+              setActiveAlarmTask(task);
+              // Deactivate alarm for this task so it doesn't pop up again
+              db.tasks.update(task.id!, { isAlarmActive: false });
+              
+              // Play notification sound
+              try {
+                if ((window as any).__activeAlarmAudio) {
+                  (window as any).__activeAlarmAudio.pause();
+                  (window as any).__activeAlarmAudio = null;
+                }
+                const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+                (window as any).__activeAlarmAudio = audio;
+                audio.play().catch(e => console.warn('Audio play failed:', e));
+              } catch (e) {
+                console.warn('Audio creation failed:', e);
+              }
 
-            // Show native notification
-            showNotificationNative('تنبيه صيانة', `موعد صيانة جهاز: ${task.customer} - ${task.deviceType}`);
+              // Show native notification
+              showNotificationNative('تنبيه صيانة', `موعد صيانة جهاز: ${task.customer} - ${task.deviceType}`);
+            } else if (diffMs > 120000) {
+              // إذا تجاوز وقت وتاريخ التنفيذ المحدد، منع ظهور الإشعارات والتنبيهات
+              db.tasks.update(task.id!, { isAlarmActive: false });
+            }
           }
         }
       });
@@ -8801,7 +9791,7 @@ export default function App() {
     
     
     const handleVoiceAction = (e: any) => {
-      const { action } = e.detail || {};
+      const { action, range, status, value } = e.detail || {};
       if (action === 'newTask') {
         handleOpenNewTask();
       } else if (action === 'notes') {
@@ -8813,17 +9803,117 @@ export default function App() {
       } else if (action === 'history') {
         setCurrentPage('dashboard');
         setDashboardActiveTab('history' as any);
-      } else if (action === 'customers') {
+      } else if (action === 'customers' || action === 'newCustomer') {
         setIsCustomerModalOpen(true);
       } else if (action === 'settings') {
         setIsSettingsModalOpen(true);
-      } else if (action === 'inventory') {
+      } else if (action === 'inventory' || action === 'newInventory') {
         setIsInventoryModalOpen(true);
-      } else if (action === 'transactions') {
-        setIsTransactionModalOpen(true);
+      } else if (action === 'transactions' || action === 'accounts' || action === 'accounting' || action === 'cashAccounts' || action === 'debts') {
+        setIsAccountModalOpen(true);
+      } else if (action === 'reports') {
+        setCurrentPage('reports');
+      } else if (action === 'tasks') {
+        setCurrentPage('tasks');
+      } else if (action === 'flashSettings') {
+        window.dispatchEvent(new CustomEvent('open-flash-ticker-settings'));
+      } else if (action === 'closeModals') {
+        setIsTaskModalOpen(false);
+        setIsCustomerModalOpen(false);
+        setIsSettingsModalOpen(false);
+        setIsInventoryModalOpen(false);
+        setIsTransactionModalOpen(false);
+        setIsAccountModalOpen(false);
+        setIsFloatingModalOpen(false);
+        setIsBackupModalOpen(false);
+        window.dispatchEvent(new CustomEvent('close-flash-ticker-settings'));
+      } else if (action === 'toggleFlashTicker') {
+        setHideMainCards(value !== undefined ? Boolean(value) : !hideMainCards);
+      } else if (action === 'setFlashRange') {
+        if (range) {
+          setFlashTaskRange(range);
+          try {
+            const saved = JSON.parse(localStorage.getItem('flashTickerSettings') || '{}');
+            saved.taskRange = range;
+            localStorage.setItem('flashTickerSettings', JSON.stringify(saved));
+          } catch (e) {}
+          window.dispatchEvent(new CustomEvent('set-flash-task-range', { detail: { taskRange: range } }));
+        }
+      } else if (action === 'toggleDarkMode') {
+        const isDark = value !== undefined ? Boolean(value) : !document.documentElement.classList.contains('dark');
+        if (isDark) {
+          document.documentElement.classList.add('dark');
+          localStorage.setItem('theme_mode', 'dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+          localStorage.setItem('theme_mode', 'light');
+        }
+      } else if (action === 'filterTasks') {
+        if (status) {
+          setTaskFilter(status === 'الكل' ? 'all' : status);
+          setCurrentPage('tasks');
+        }
       }
     };
 
+    const handleAddDropdownOptionVoice = async (e: any) => {
+      const { listName, optionValue } = e.detail || {};
+      if (!listName || !optionValue) return;
+      try {
+        if (listName === 'issueOptions' || listName === 'المشكلة') {
+          const cur = (await db.settings.get('issueOptions'))?.value || DEFAULT_ISSUE_OPTIONS;
+          if (!cur.includes(optionValue)) {
+            const updated = [...cur, optionValue];
+            await db.settings.put({ key: 'issueOptions', value: updated });
+            setIssueOptions(updated);
+          }
+        } else if (listName === 'inspectionOptions' || listName === 'الفحص') {
+          const cur = (await db.settings.get('inspectionOptions'))?.value || DEFAULT_INSPECTION_OPTIONS;
+          if (!cur.includes(optionValue)) {
+            const updated = [...cur, optionValue];
+            await db.settings.put({ key: 'inspectionOptions', value: updated });
+            setInspectionOptions(updated);
+          }
+        } else if (listName === 'statusOptions' || listName === 'الحالة') {
+          await db.taskStatuses.add({ name: optionValue });
+        } else if (listName === 'storageLocations' || listName === 'موقع الحفظ') {
+          await db.storageLocations.add({ name: optionValue });
+        } else if (listName === 'technicianOptions' || listName === 'الفنيين') {
+          const curTechs = (await db.settings.get('techniciansList'))?.value || [];
+          if (!curTechs.includes(optionValue)) {
+            await db.settings.put({ key: 'techniciansList', value: [...curTechs, optionValue] });
+          }
+        }
+        toast.success(`تمت إضافة الخيار "${optionValue}" إلى القائمة بنجاح`);
+      } catch (err) {
+        console.warn("Failed to add dropdown option via voice:", err);
+      }
+    };
+
+    const handleOpenAccountReportVoice = (e: any) => {
+      const { identifier } = e.detail || {};
+      if (identifier) {
+        setSelectedAccountIdForReport(identifier);
+        setIsAccountReportModalOpen(true);
+      }
+    };
+
+    const handleOpenModalVoice = (e: any) => {
+      const modal = e.detail?.modal;
+      if (!modal) return;
+      if (modal === 'ui_settings') setIsUiCustomizationModalOpen(true);
+      else if (modal === 'backup') setIsBackupModalOpen(true);
+      else if (modal === 'export_settings') setIsExportSettingsModalOpen(true);
+      else if (modal === 'user_management') setIsUserManagementModalOpen(true);
+      else if (modal === 'daily_shortcuts') setIsDailyBondPreferencesModalOpen(true);
+      else if (modal === 'rates') setIsRatesModalOpen(true);
+      else if (modal === 'omni_preview') setIsOmniPreviewModalOpen(true);
+      else if (modal === 'settings') setIsSettingsModalOpen(true);
+    };
+
+    window.addEventListener('add-dropdown-option-voice', handleAddDropdownOptionVoice);
+    window.addEventListener('open-account-report', handleOpenAccountReportVoice);
+    window.addEventListener('open-modal-voice', handleOpenModalVoice);
     window.addEventListener('open-add-note', handleOpenAddNote);
     window.addEventListener('search-notes', handleSearchNotes);
     window.addEventListener('remove-note-voice', handleRemoveNoteVoice);
@@ -8835,6 +9925,9 @@ export default function App() {
     window.addEventListener('open-task-id', handleOpenTaskId);
 
     return () => {
+      window.removeEventListener('add-dropdown-option-voice', handleAddDropdownOptionVoice);
+      window.removeEventListener('open-account-report', handleOpenAccountReportVoice);
+      window.removeEventListener('open-modal-voice', handleOpenModalVoice);
       window.removeEventListener('open-add-note', handleOpenAddNote);
       window.removeEventListener('search-notes', handleSearchNotes);
       window.removeEventListener('remove-note-voice', handleRemoveNoteVoice);
@@ -9467,7 +10560,7 @@ export default function App() {
         }
         return false;
       }
-      if (reportClass === 'all' || reportClass === 'system_stats' || reportClass === 'analytics_ranking') {
+      if (reportClass === 'all' || reportClass === 'system_stats' || reportClass === 'analytics_ranking' || reportClass === 'task_completion_rates') {
         return true;
       }
       // For other classes (financial, inventory, etc.), we don't want tasks unless it's 'all'
@@ -9510,6 +10603,8 @@ export default function App() {
         );
         if (selectedAcc) {
           if (t.cashAccountId && t.cashAccountId === selectedAcc.id) return true;
+          if (t.relatedAccountId && t.relatedAccountId === selectedAcc.id) return true;
+          if (t.customerName && t.customerName.toLowerCase().trim() === selectedAcc.name.toLowerCase().trim()) return true;
           const src = t.sourceAccount?.toLowerCase().trim();
           const dst = t.destinationAccount?.toLowerCase().trim();
           const aName = selectedAcc.name.toLowerCase().trim();
@@ -9800,10 +10895,7 @@ export default function App() {
         description: 'تحميل الملف مباشرة إلى مجلد التنزيلات بالجهاز (جوال أندرويد/كمبيوتر)',
         action: async () => {
           if (!exportBlob) return;
-          const ok = await downloadBlob(exportBlob, exportFileName);
-          if (ok) {
-            alert(`✅ تم بدء تنزيل الملف بنجاح:\n${exportFileName}`);
-          }
+          await downloadBlob(exportBlob, exportFileName);
           setIsExportModalOpen(false);
         }
       },
@@ -9888,10 +10980,7 @@ export default function App() {
         action: async () => {
           if (!exportBlob) return;
           const text = exportStringData || (await exportBlob.text());
-          const ok = await exportBackupToAndroidNativeDrive(text, exportFileName);
-          if (ok) {
-            alert(`تم توجيه النسخة الاحتياطية إلى Google Drive / الحفظ السحابي بنجاح!`);
-          }
+          await exportBackupToAndroidNativeDrive(text, exportFileName);
           setIsExportModalOpen(false);
         }
       },
@@ -10241,6 +11330,7 @@ export default function App() {
       'inventory_list': 'قائمة المخزون',
       'system_stats': 'إحصائيات النظام الشاملة',
       'analytics_ranking': 'تحليلات الأكثر إيراداً واستخداماً',
+      'task_completion_rates': 'معدل إنجاز المهام حسب الفئات',
       'inactive_week': 'مهام تجاوزت أسبوع دون تعديل',
       'inactive_month': 'مهام تجاوزت شهر دون تعديل',
       'customer_dues': 'مستحقات العملاء والمعلقات المالية'
@@ -11152,10 +12242,10 @@ export default function App() {
       const isTerminalStatus = ['تم التنفيذ', 'ملغية', 'إلغاء المهمة', 'completed', 'maintenance-done', 'reported-cancelled', 'cancelled-delivered', 'archived'].includes(status);
       
       if (task.executionTime && task.isAlarmActive && !task.isExecuted && !isTerminalStatus) {
-        const execTime = new Date(task.executionTime);
-        if (execTime > new Date()) {
+        const execTime = parseExecutionTimeToDate(task.executionTime);
+        if (execTime && execTime > new Date()) {
           const title = 'موعد صيانة مجدول';
-          const message = `تذكير بموعد صيانة: ${task.customer || ''}`;
+          const message = `تذكير بموعد صيانة: ${task.customer || ''} (${formatExecutionTimeArabic(task.executionTime)})`;
           await showNotificationNative(title, message, execTime, taskId);
         }
       }
@@ -11290,6 +12380,9 @@ export default function App() {
         imageUrls: Object.values(deviceImagesMap).flat(),
         depositHistory: depositHistoryItems,
         taskType: selectedTaskType === 'maintenance' ? undefined : selectedTaskType,
+        technician: taskData.technician || prevTask?.technician,
+        assignedEmployee: taskData.assignedEmployee || prevTask?.assignedEmployee,
+        category: taskData.category || prevTask?.category,
         updatedAt: new Date().toISOString()
       };
 
@@ -11421,8 +12514,8 @@ export default function App() {
         deposit: taskData.deposit || 0,
         currency: taskData.currency || systemCurrency,
         status: taskData.status || 'pending',
-        executionTime: taskData.executionTime,
-        isAlarmActive: taskData.isAlarmActive ?? false,
+        executionTime: taskData.executionTime ? (parseDateTimeLocalToISO(taskData.executionTime) || taskData.executionTime) : getDefaultExecutionTime(taskData.createdAt),
+        isAlarmActive: taskData.isAlarmActive ?? true,
         isExecuted: taskData.isExecuted ?? false,
         createdAt: taskData.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -11433,6 +12526,9 @@ export default function App() {
         imageUrls: Object.values(deviceImagesMap).flat(),
         depositHistory: depositHistoryItems,
         taskType: selectedTaskType === 'maintenance' ? undefined : selectedTaskType,
+        technician: taskData.technician || (currentUser?.username ? currentUser.username : undefined),
+        assignedEmployee: taskData.assignedEmployee,
+        category: taskData.category,
         isArchived: taskData.status === 'archived' || (isDelivered && balance <= 0)
       };
       if (isDelivered && balance <= 0) {
@@ -11728,7 +12824,7 @@ export default function App() {
           amount: Math.abs(accountData.balance),
           currency: accountData.currency || systemCurrency || 'RY',
           category: 'رصيد افتتاحي',
-          customerName: trimmedName,
+          customerName: null,
           cashAccountId: newAccId,
           date: new Date().toISOString()
         };
@@ -11781,6 +12877,8 @@ export default function App() {
     setTransactionCategory(transaction.category || '');
     setTransactionCustomerName(transaction.customerName || '');
     setTransactionModalCurrency(transaction.currency || systemCurrency || 'RY');
+    setTransactionAmountInput(transaction.amount ? String(transaction.amount) : '');
+    setTransactionCashAccountId(transaction.cashAccountId || defaultCashbox?.id || '');
     setIsTransactionModalOpen(true);
   };
 
@@ -11833,13 +12931,41 @@ export default function App() {
   };
 
   const handleTransactionSubmit = async (transData: Partial<Transaction>) => {
-    let linkedCashAccountId = transData.cashAccountId;
+    // 1. تحديد الصندوق أو الخزينة الفعلية لخصم أو توريد النقدية (افتراضياً: صندوق النقد اليومي)
+    const allCashAccounts = await db.cashAccounts.toArray();
+    let targetCashbox = allCashAccounts.find(a => a.id === transData.cashAccountId && a.type !== 'general');
+    if (!targetCashbox) {
+      targetCashbox = allCashAccounts.find(a => a.isDefault && a.type !== 'general') ||
+                      allCashAccounts.find(a => a.type === 'cashbox') ||
+                      allCashAccounts.find(a => a.type === 'vault') ||
+                      allCashAccounts.find(a => a.type !== 'general') ||
+                      allCashAccounts[0];
+    }
+    if (!targetCashbox) {
+      const newDefId = await db.cashAccounts.add({
+        name: 'الصندوق الرئيسي (النقد اليومي)',
+        type: 'cashbox',
+        balance: 0,
+        currency: transData.currency || systemCurrency || 'RY',
+        isDefault: true,
+        createdAt: new Date().toISOString(),
+        notes: 'صندوق النقدية اليومية والمقبوضات المباشرة'
+      });
+      targetCashbox = (await db.cashAccounts.get(newDefId)) || undefined;
+    }
+    const resolvedCashAccountId = targetCashbox?.id;
+    const resolvedSourceAccount = targetCashbox?.name || 'الصندوق الرئيسي (النقد اليومي)';
+
+    // 2. معالجة الحساب المستقل أو العميل المرتبط بالمعاملة
+    let linkedStandaloneAccountId: number | undefined = undefined;
     const rawName = transData.customerName?.trim();
     if (rawName) {
       const isCust = customers.some(c => (c.name || '').trim().toLowerCase() === rawName.toLowerCase());
-      const existingAcc = cashAccounts.find(a => (a.name || '').trim().toLowerCase() === rawName.toLowerCase());
+      const existingAcc = allCashAccounts.find(a => (a.name || '').trim().toLowerCase() === rawName.toLowerCase());
       if (existingAcc && existingAcc.id) {
-        linkedCashAccountId = existingAcc.id;
+        if (existingAcc.type === 'general') {
+          linkedStandaloneAccountId = existingAcc.id;
+        }
       } else if (!isCust) {
         // Automatically create this account outside of customer scope!
         const newAccId = await db.cashAccounts.add({
@@ -11849,19 +12975,22 @@ export default function App() {
           currency: transData.currency || systemCurrency || 'RY',
           classification: 'حسابات عامة',
           createdAt: new Date().toISOString(),
-          notes: 'حساب مالي أضيف تلقائياً من نافذة المعاملات',
+          notes: 'حساب مالي مستقل أضيف تلقائياً من نافذة المعاملات',
           statement: transData.description || 'معاملة مالية'
         });
-        linkedCashAccountId = newAccId;
-        toast.success(`تم إنشاء وإضافة "${rawName}" كحساب مالي جديد تلقائياً`);
+        linkedStandaloneAccountId = newAccId as number;
+        toast.success(`تم إنشاء وإضافة "${rawName}" كحساب مالي مستقل جديد تلقائياً`);
       }
     }
 
     if (editingId) {
       const prevTx = await db.transactions.get(editingId);
-      const updatedTransData = {
+      const updatedTransData: Partial<Transaction> = {
         ...transData,
-        ...(linkedCashAccountId ? { cashAccountId: linkedCashAccountId } : {})
+        cashAccountId: resolvedCashAccountId,
+        sourceAccount: resolvedSourceAccount,
+        relatedAccountId: linkedStandaloneAccountId,
+        customerName: rawName || null
       };
       await db.transactions.update(editingId, updatedTransData);
       
@@ -11890,7 +13019,7 @@ export default function App() {
         await adjustTransactionInCashAccount(prevTx, { ...prevTx, ...updatedTransData } as Transaction, exchangeRates);
       }
 
-      await logAudit('edit', 'transaction', editingId, transData.category || 'معاملة مالية', `تعديل معاملة مالية بقيمة ${transData.amount || 0}`, prevTx, updatedTransData);
+      await logAudit('edit', 'transaction', editingId, transData.category || 'معاملة مالية', `تعديل معاملة مالية بقيمة ${transData.amount || 0} (${resolvedSourceAccount})`, prevTx, updatedTransData);
     } else {
       const newTrans: Transaction = {
         id: Date.now(),
@@ -11899,16 +13028,20 @@ export default function App() {
         amount: transData.amount || 0,
         currency: transData.currency || systemCurrency || 'RY',
         category: transData.category || 'أخرى',
-        customerName: transData.customerName || null,
-        cashAccountId: linkedCashAccountId,
+        customerName: rawName || null,
+        cashAccountId: resolvedCashAccountId,
+        sourceAccount: resolvedSourceAccount,
+        relatedAccountId: linkedStandaloneAccountId,
         date: transData.date || new Date().toISOString(),
       };
       await db.transactions.add(newTrans);
       await syncTransactionToCashAccount(newTrans, exchangeRates, false);
-      await logAudit('add', 'transaction', newTrans.id, newTrans.category, `إضافة معاملة مالية جديدة (${newTrans.type}): ${newTrans.amount} ${newTrans.currency}`, null, newTrans);
+      await logAudit('add', 'transaction', newTrans.id, newTrans.category, `إضافة معاملة مالية جديدة (${newTrans.type}): ${newTrans.amount} ${newTrans.currency} من ${resolvedSourceAccount}${rawName ? ` لحساب: ${rawName}` : ''}`, null, newTrans);
     }
+    hapticSuccess();
     setIsTransactionModalOpen(false);
     setEditingId(null);
+    setTransactionCashAccountId('');
   };
 
   const cleanBackupDataForExport = (data: any, includeMedia: boolean) => {
@@ -11941,14 +13074,25 @@ export default function App() {
     backupDataObj.customers = await db.customers.toArray();
     backupDataObj.inventory = await db.inventory.toArray();
     backupDataObj.transactions = await db.transactions.toArray();
+    backupDataObj.cashAccounts = await db.cashAccounts.toArray();
+    backupDataObj.debtAccounts = await db.debtAccounts.toArray();
     backupDataObj.users = await db.users.toArray();
     backupDataObj.settings = await db.settings.toArray();
+    backupDataObj.auditLogs = await db.auditLogs.toArray();
+    backupDataObj.reportSchedules = await db.reportSchedules.toArray();
+
+    // Capture ALL localStorage keys comprehensively
     const allLocalStore: Record<string, string> = {};
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key) allLocalStore[key] = localStorage.getItem(key) || '';
+      if (key) {
+        const val = localStorage.getItem(key);
+        if (val !== null) allLocalStore[key] = val;
+      }
     }
     backupDataObj.localStorageOptions = allLocalStore;
+    backupDataObj.allLocalStorage = allLocalStore;
+
     backupDataObj.deviceTypes = await db.deviceTypes.toArray();
     backupDataObj.taskStatuses = await db.taskStatuses.toArray();
     backupDataObj.taskCosts = await db.taskCosts.toArray();
@@ -11959,6 +13103,17 @@ export default function App() {
     backupDataObj.reminders = reminders;
     backupDataObj.customAlerts = JSON.parse(localStorage.getItem('faisali_custom_alerts') || '[]');
     backupDataObj.hiddenHomeTaskIds = JSON.parse(localStorage.getItem('faisali_hidden_home_task_ids') || '[]');
+
+    // Explicit top-level tool & feature configurations
+    backupDataObj.flashTickerSettings = JSON.parse(localStorage.getItem('flashTickerSettings') || localStorage.getItem('flash_ticker_custom_settings') || '{}');
+    backupDataObj.voiceAssistantSettings = getVoiceSettings();
+    backupDataObj.exportSettings = getExportSettings();
+    backupDataObj.activityLoggerSettings = JSON.parse(localStorage.getItem('app_activity_logger_settings') || '{}');
+    backupDataObj.receiptPrintLayout = JSON.parse(localStorage.getItem('faisali_receipt_layout_v1') || '{}');
+    backupDataObj.taskTemplates = JSON.parse(localStorage.getItem('task_templates') || '[]');
+    backupDataObj.dashboardTaskDisplayOptions = JSON.parse(localStorage.getItem('dashboardTaskDisplayOptions') || '{}');
+    backupDataObj.dailyBondShortcuts = getDailyBondShortcuts();
+
     return cleanBackupDataForExport(backupDataObj, false); // Don't include media for automated cloud backups to keep size small
   };
 
@@ -11983,6 +13138,11 @@ export default function App() {
       if (backupSections.customers) backupDataObj.customers = await db.customers.toArray();
       if (backupSections.inventory) backupDataObj.inventory = await db.inventory.toArray();
       if (backupSections.transactions) backupDataObj.transactions = await db.transactions.toArray();
+      if (backupSections.accounts || backupSections.transactions) {
+        backupDataObj.cashAccounts = await db.cashAccounts.toArray();
+        backupDataObj.debtAccounts = await db.debtAccounts.toArray();
+        backupDataObj.dailyBondShortcuts = getDailyBondShortcuts();
+      }
       if (backupSections.users) backupDataObj.users = await db.users.toArray();
       
       if (backupSections.settings) {
@@ -11990,9 +13150,24 @@ export default function App() {
         const allLocalStore: Record<string, string> = {};
         for (let i = 0; i < localStorage.length; i++) {
           const key = localStorage.key(i);
-          if (key) allLocalStore[key] = localStorage.getItem(key) || '';
+          if (key) {
+            const val = localStorage.getItem(key);
+            if (val !== null) allLocalStore[key] = val;
+          }
         }
         backupDataObj.localStorageOptions = allLocalStore;
+        backupDataObj.allLocalStorage = allLocalStore;
+
+        backupDataObj.flashTickerSettings = JSON.parse(localStorage.getItem('flashTickerSettings') || localStorage.getItem('flash_ticker_custom_settings') || '{}');
+        backupDataObj.voiceAssistantSettings = getVoiceSettings();
+        backupDataObj.exportSettings = getExportSettings();
+        backupDataObj.activityLoggerSettings = JSON.parse(localStorage.getItem('app_activity_logger_settings') || '{}');
+        backupDataObj.receiptPrintLayout = JSON.parse(localStorage.getItem('faisali_receipt_layout_v1') || '{}');
+        backupDataObj.taskTemplates = JSON.parse(localStorage.getItem('task_templates') || '[]');
+        backupDataObj.dashboardTaskDisplayOptions = JSON.parse(localStorage.getItem('dashboardTaskDisplayOptions') || '{}');
+        backupDataObj.dailyBondShortcuts = getDailyBondShortcuts();
+        backupDataObj.auditLogs = await db.auditLogs.toArray();
+        backupDataObj.reportSchedules = await db.reportSchedules.toArray();
       }
 
       if (backupSections.dropdowns) {
@@ -12009,6 +13184,12 @@ export default function App() {
         backupDataObj.reminders = reminders;
         backupDataObj.customAlerts = JSON.parse(localStorage.getItem('faisali_custom_alerts') || '[]');
         backupDataObj.hiddenHomeTaskIds = JSON.parse(localStorage.getItem('faisali_hidden_home_task_ids') || '[]');
+        if (!backupDataObj.flashTickerSettings) {
+          backupDataObj.flashTickerSettings = JSON.parse(localStorage.getItem('flashTickerSettings') || localStorage.getItem('flash_ticker_custom_settings') || '{}');
+        }
+        if (!backupDataObj.voiceAssistantSettings) {
+          backupDataObj.voiceAssistantSettings = getVoiceSettings();
+        }
       }
 
       const cleanData = cleanBackupDataForExport(backupDataObj, backupSections.media);
@@ -12026,18 +13207,12 @@ export default function App() {
       setExportStringData(jsonString);
 
       if (directShare === 'drive') {
-        const ok = await exportBackupToAndroidNativeDrive(jsonString, fileName);
-        if (ok) {
-          alert(`✅ تم توجيه النسخة الاحتياطية إلى Google Drive بنجاح:\n${fileName}`);
-        }
+        await exportBackupToAndroidNativeDrive(jsonString, fileName);
       } else if (directShare === true) {
         setExportType('backup');
         setIsExportModalOpen(true);
       } else {
-        const ok = await downloadBlob(blob, fileName);
-        if (ok) {
-          alert(`✅ تم بدء تنزيل النسخة الاحتياطية (${format.toUpperCase()}) بنجاح:\n${fileName}`);
-        }
+        await downloadBlob(blob, fileName);
       }
       
     } catch (error) {
@@ -12055,6 +13230,11 @@ export default function App() {
       if (backupSections.customers) backupDataObj.customers = await db.customers.toArray();
       if (backupSections.inventory) backupDataObj.inventory = await db.inventory.toArray();
       if (backupSections.transactions) backupDataObj.transactions = await db.transactions.toArray();
+      if (backupSections.accounts || backupSections.transactions) {
+        backupDataObj.cashAccounts = await db.cashAccounts.toArray();
+        backupDataObj.debtAccounts = await db.debtAccounts.toArray();
+        backupDataObj.dailyBondShortcuts = getDailyBondShortcuts();
+      }
       if (backupSections.users) backupDataObj.users = await db.users.toArray();
       
       if (backupSections.settings) {
@@ -12062,9 +13242,24 @@ export default function App() {
         const allLocalStore: Record<string, string> = {};
         for (let i = 0; i < localStorage.length; i++) {
           const key = localStorage.key(i);
-          if (key) allLocalStore[key] = localStorage.getItem(key) || '';
+          if (key) {
+            const val = localStorage.getItem(key);
+            if (val !== null) allLocalStore[key] = val;
+          }
         }
         backupDataObj.localStorageOptions = allLocalStore;
+        backupDataObj.allLocalStorage = allLocalStore;
+
+        backupDataObj.flashTickerSettings = JSON.parse(localStorage.getItem('flashTickerSettings') || localStorage.getItem('flash_ticker_custom_settings') || '{}');
+        backupDataObj.voiceAssistantSettings = getVoiceSettings();
+        backupDataObj.exportSettings = getExportSettings();
+        backupDataObj.activityLoggerSettings = JSON.parse(localStorage.getItem('app_activity_logger_settings') || '{}');
+        backupDataObj.receiptPrintLayout = JSON.parse(localStorage.getItem('faisali_receipt_layout_v1') || '{}');
+        backupDataObj.taskTemplates = JSON.parse(localStorage.getItem('task_templates') || '[]');
+        backupDataObj.dashboardTaskDisplayOptions = JSON.parse(localStorage.getItem('dashboardTaskDisplayOptions') || '{}');
+        backupDataObj.dailyBondShortcuts = getDailyBondShortcuts();
+        backupDataObj.auditLogs = await db.auditLogs.toArray();
+        backupDataObj.reportSchedules = await db.reportSchedules.toArray();
       }
 
       if (backupSections.dropdowns) {
@@ -12081,6 +13276,12 @@ export default function App() {
         backupDataObj.reminders = reminders;
         backupDataObj.customAlerts = JSON.parse(localStorage.getItem('faisali_custom_alerts') || '[]');
         backupDataObj.hiddenHomeTaskIds = JSON.parse(localStorage.getItem('faisali_hidden_home_task_ids') || '[]');
+        if (!backupDataObj.flashTickerSettings) {
+          backupDataObj.flashTickerSettings = JSON.parse(localStorage.getItem('flashTickerSettings') || localStorage.getItem('flash_ticker_custom_settings') || '{}');
+        }
+        if (!backupDataObj.voiceAssistantSettings) {
+          backupDataObj.voiceAssistantSettings = getVoiceSettings();
+        }
       }
 
       const cleanData = cleanBackupDataForExport(backupDataObj, backupSections.media);
@@ -12150,7 +13351,8 @@ export default function App() {
       if (data.customers && importSections.customers) sectionsToRestore.push('العملاء');
       if (data.inventory && importSections.inventory) sectionsToRestore.push('المخزون');
       if (data.transactions && importSections.transactions) sectionsToRestore.push('المعاملات');
-      if (data.settings && importSections.settings) sectionsToRestore.push('الإعدادات');
+      if ((data.cashAccounts || data.debtAccounts) && (importSections.accounts || importSections.transactions)) sectionsToRestore.push('الحسابات المستقلة والديون والمركز المالي');
+      if (data.settings && importSections.settings) sectionsToRestore.push('الإعدادات الشاملة للتطبيق والواجهات (الفلاشية/المساعد)');
       if (data.deviceTypes && importSections.dropdowns) sectionsToRestore.push('خيارات القوائم');
       if (data.users && importSections.users) sectionsToRestore.push('المستخدمين وصلاحياتهم');
       if ((data.notes || data.reminders || data.customAlerts) && importSections.notesAndTools) sectionsToRestore.push('الملاحظات والأدوات');
@@ -12163,7 +13365,8 @@ export default function App() {
       if (safeConfirm(`هل أنت متأكد؟ سيتم استعادة الأقسام المحددة فقط: (${sectionsToRestore.join('، ')})، بينما سيتم الاحتفاظ بجميع الأقسام الأخرى في التطبيق دون أي مسح أو تعديل.`)) {
         await db.transaction('rw', [
           db.tasks, db.customers, db.inventory, db.transactions, db.settings,
-          db.deviceTypes, db.taskStatuses, db.taskCosts, db.customerClassifications, db.storageLocations, db.deviceModels, db.users
+          db.deviceTypes, db.taskStatuses, db.taskCosts, db.customerClassifications, db.storageLocations, db.deviceModels, db.users,
+          db.cashAccounts, db.debtAccounts, db.auditLogs, db.reportSchedules, db.voiceChats
         ], async () => {
           if (data.tasks && importSections.tasks) {
             await db.tasks.clear();
@@ -12181,6 +13384,18 @@ export default function App() {
             await db.transactions.clear();
             await db.transactions.bulkAdd(data.transactions);
           }
+          if ((importSections.accounts || importSections.transactions) && data.cashAccounts && Array.isArray(data.cashAccounts)) {
+            await db.cashAccounts.clear();
+            await db.cashAccounts.bulkAdd(data.cashAccounts);
+          }
+          if ((importSections.accounts || importSections.transactions) && data.debtAccounts && Array.isArray(data.debtAccounts)) {
+            await db.debtAccounts.clear();
+            await db.debtAccounts.bulkAdd(data.debtAccounts);
+          }
+          if ((importSections.accounts || importSections.transactions || importSections.settings) && data.dailyBondShortcuts && Array.isArray(data.dailyBondShortcuts)) {
+            saveDailyBondShortcuts(data.dailyBondShortcuts);
+            window.dispatchEvent(new CustomEvent('daily_bond_shortcuts_changed'));
+          }
           if (data.users && importSections.users) {
             await db.users.clear();
             await db.users.bulkAdd(data.users);
@@ -12188,12 +13403,72 @@ export default function App() {
           if (data.settings && importSections.settings) {
             await db.settings.clear();
             await db.settings.bulkAdd(data.settings);
-            if (data.localStorageOptions) {
-              for (const [key, value] of Object.entries(data.localStorageOptions)) {
+            
+            const store = data.allLocalStorage || data.localStorageOptions;
+            if (store && typeof store === 'object') {
+              for (const [key, value] of Object.entries(store)) {
                 if (typeof value === 'string') {
                   localStorage.setItem(key, value);
+                } else {
+                  localStorage.setItem(key, JSON.stringify(value));
                 }
               }
+            }
+
+            // Restore Flash Ticker settings
+            if (data.flashTickerSettings && typeof data.flashTickerSettings === 'object') {
+              const str = JSON.stringify(data.flashTickerSettings);
+              localStorage.setItem('flashTickerSettings', str);
+              localStorage.setItem('flash_ticker_custom_settings', str);
+              window.dispatchEvent(new CustomEvent('flash_ticker_settings_updated'));
+            }
+
+            // Restore Voice Assistant settings
+            if (data.voiceAssistantSettings && typeof data.voiceAssistantSettings === 'object') {
+              saveVoiceSettings(data.voiceAssistantSettings);
+            }
+
+            // Restore Export / Print & Share settings
+            if (data.exportSettings && typeof data.exportSettings === 'object') {
+              saveExportSettings(data.exportSettings);
+            }
+
+            // Restore Activity Logger settings
+            if (data.activityLoggerSettings && typeof data.activityLoggerSettings === 'object') {
+              localStorage.setItem('app_activity_logger_settings', JSON.stringify(data.activityLoggerSettings));
+            }
+
+            // Restore Receipt Print layout
+            if (data.receiptPrintLayout && typeof data.receiptPrintLayout === 'object') {
+              localStorage.setItem('faisali_receipt_layout_v1', JSON.stringify(data.receiptPrintLayout));
+            }
+
+            // Restore Task templates
+            if (data.taskTemplates && Array.isArray(data.taskTemplates)) {
+              localStorage.setItem('task_templates', JSON.stringify(data.taskTemplates));
+            }
+
+            // Restore Dashboard display options
+            if (data.dashboardTaskDisplayOptions && typeof data.dashboardTaskDisplayOptions === 'object') {
+              localStorage.setItem('dashboardTaskDisplayOptions', JSON.stringify(data.dashboardTaskDisplayOptions));
+            }
+
+            // Restore Audit logs
+            if (data.auditLogs && Array.isArray(data.auditLogs)) {
+              await db.auditLogs.clear();
+              await db.auditLogs.bulkAdd(data.auditLogs);
+            }
+
+            // Restore Report schedules
+            if (data.reportSchedules && Array.isArray(data.reportSchedules)) {
+              await db.reportSchedules.clear();
+              await db.reportSchedules.bulkAdd(data.reportSchedules);
+            }
+
+            // Restore Voice Chats history
+            if (data.voiceChats && Array.isArray(data.voiceChats)) {
+              await db.voiceChats.clear();
+              await db.voiceChats.bulkAdd(data.voiceChats);
             }
           }
           if (data.deviceTypes && importSections.dropdowns) {
@@ -12223,6 +13498,10 @@ export default function App() {
             localStorage.setItem('faisali_hidden_home_task_ids', JSON.stringify(data.hiddenHomeTaskIds));
           }
         }
+
+        window.dispatchEvent(new Event('voice_settings_changed'));
+        window.dispatchEvent(new Event('export_settings_changed'));
+        window.dispatchEvent(new Event('storage'));
         alert('تم استيراد الأقسام المحددة بنجاح مع الحفاظ على باقي بيانات التطبيق الحالية دون أي فقدان!');
         window.location.reload();
       }
@@ -12903,10 +14182,10 @@ export default function App() {
               handleOpenCustomerFinancialAccount(task.customer);
             }}
             className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 hover:text-emerald-800 border border-emerald-200/80 transition-all text-[10px] font-black cursor-pointer shadow-2xs active:scale-95 shrink-0 select-none"
-            title={`عرض كل الحسابات والعمليات المالية للعميل ${task.customer}`}
+            title={`عرض الحسابات والعمليات المالية للعميل ${task.customer}`}
           >
             <Wallet className="w-3 h-3 text-emerald-600 shrink-0" />
-            <span className="whitespace-nowrap">كل حساب العميل</span>
+            <span className="whitespace-nowrap">حساب</span>
           </button>
           <button
             type="button"
@@ -12915,10 +14194,10 @@ export default function App() {
               handleViewCustomerAllTasks(task.customer);
             }}
             className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 hover:text-blue-800 border border-blue-200/80 transition-all text-[10px] font-black cursor-pointer shadow-2xs active:scale-95 shrink-0 select-none"
-            title={`عرض جميع مهام العميل ${task.customer}`}
+            title={`عرض مهام العميل ${task.customer}`}
           >
             <ClipboardList className="w-3 h-3 text-blue-600 shrink-0" />
-            <span className="whitespace-nowrap">كل مهام العميل</span>
+            <span className="whitespace-nowrap">مهام</span>
           </button>
           {task.taskType === 'sale' && <span className="bg-yellow-600/30 text-yellow-905 text-[10px] font-bold px-1.5 py-0.5 rounded border border-yellow-400">مبيعات</span>}
           {task.taskType === 'purchase' && <span className="bg-pink-600/30 text-pink-900 text-[10px] font-bold px-1.5 py-0.5 rounded border border-pink-400">مشتريات</span>}
@@ -13142,23 +14421,6 @@ export default function App() {
                   className="flex items-center gap-1 flex-nowrap shrink-0"
                 />
 
-                {/* أيقونة مشاركة القالب المختصر */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const shortTemplate = taskTemplates.find(t => t.type === 'short') || taskTemplates[0];
-                    const templateContent = shortTemplate ? shortTemplate.content : '👤 *العميل:* {customer}\n📱 *الجهاز:* {device}';
-                    const formatted = formatTaskWithTemplate(task, templateContent);
-                    navigator.clipboard.writeText(formatted);
-                    alert('تم نسخ تفاصيل المهمة باستخدام القالب المختصر بنجاح');
-                  }}
-                  className="w-7 h-7 sm:w-8 sm:h-8 bg-white/90 hover:bg-emerald-50 hover:text-emerald-600 rounded-xl transition-all text-slate-600 flex items-center justify-center shadow-2xs border border-slate-200/70 cursor-pointer shrink-0 active:scale-95"
-                  title="نسخ تفاصيل المهمة (القالب المختصر)"
-                >
-                  <Share2 className="w-3.5 h-3.5 shrink-0" />
-                </button>
-
                 {/* أيقونة مشاركة الواتساب مباشرة */}
                 <button
                   type="button"
@@ -13346,6 +14608,180 @@ export default function App() {
       );
     };
 
+    const renderCardRow1 = () => {
+      return (
+        <div className="flex items-center justify-between w-full pb-1.5 border-b border-slate-100/90 mb-1 gap-2 min-w-0" onClick={(e) => e.stopPropagation()}>
+          {/* ركن المهمة الأيمن: أزرار حساب ومهام والشارات */}
+          <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+            {task.customer && (
+              <>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenCustomerFinancialAccount(task.customer);
+                  }}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 hover:text-emerald-800 border border-emerald-200/80 transition-all text-[10px] sm:text-[11px] font-black cursor-pointer shadow-2xs active:scale-95 shrink-0 select-none"
+                  title={`عرض حسابات والعمليات المالية للعميل ${task.customer}`}
+                >
+                  <Wallet className="w-3 h-3 text-emerald-600 shrink-0" />
+                  <span className="whitespace-nowrap">حساب</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleViewCustomerAllTasks(task.customer);
+                  }}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 hover:text-blue-800 border border-blue-200/80 transition-all text-[10px] sm:text-[11px] font-black cursor-pointer shadow-2xs active:scale-95 shrink-0 select-none"
+                  title={`عرض مهام العميل ${task.customer}`}
+                >
+                  <ClipboardList className="w-3 h-3 text-blue-600 shrink-0" />
+                  <span className="whitespace-nowrap">مهام</span>
+                </button>
+              </>
+            )}
+            {task.taskType === 'sale' && <span className="bg-yellow-600/30 text-yellow-950 text-[10px] font-bold px-1.5 py-0.5 rounded border border-yellow-400">مبيعات</span>}
+            {task.taskType === 'purchase' && <span className="bg-pink-600/30 text-pink-950 text-[10px] font-bold px-1.5 py-0.5 rounded border border-pink-400">مشتريات</span>}
+          </div>
+
+          {/* تفاصيل الوقت والتاريخ المنقولة إلى الصف الأول جوار الأيقونات */}
+          <div className="flex items-center gap-1.5 shrink-0 mr-auto">
+            {renderCreationTimeBadge()}
+            {currentPage === 'tasks' && (
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  const prev = await db.tasks.get(task.id!);
+                  if (task.isArchived) {
+                    const update = {
+                      updatedAt: new Date().toISOString(),
+                      isArchived: false,
+                      hiddenAt: undefined
+                    };
+                    await db.tasks.update(task.id!, update);
+                    if (prev) {
+                      await logAudit('edit', 'task', task.id, task.customer || `مهمة #${task.id}`, 'استعادة المهمة من الأرشيف للقائمة النشطة', prev, { ...prev, ...update, id: task.id });
+                    }
+                  } else {
+                    const update = {
+                      isArchived: true,
+                      hiddenAt: undefined,
+                      updatedAt: new Date().toISOString()
+                    };
+                    await db.tasks.update(task.id!, update);
+                    if (prev) {
+                      await logAudit('edit', 'task', task.id, task.customer || `مهمة #${task.id}`, 'أرشفة المهمة', prev, { ...prev, ...update, id: task.id });
+                    }
+                  }
+                }}
+                className="bg-white/50 p-1 rounded-full hover:bg-slate-200 transition-colors cursor-pointer border border-slate-300/30 shrink-0"
+                title={task.isArchived ? 'استعادة للقائمة النشطة' : 'أرشفة نهائية'}
+              >
+                {task.isArchived ? <RefreshCw className="w-3.5 h-3.5 text-amber-600" /> : <Archive className="w-3.5 h-3.5 text-slate-500" />}
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    const renderCardRow2 = (extraCustomerClass = "") => {
+      const hasPhone = hasCustomerPhone(task) || Boolean(customerPhone);
+      const customerName = task.customer || 'عميل عام';
+      const nameLen = customerName.length;
+      const dynamicSize = 
+        nameLen > 30 ? "text-sm sm:text-base" :
+        nameLen > 20 ? "text-base sm:text-lg" :
+        (cardStyleConfig.customerTextSize || 'text-base sm:text-lg');
+
+      return (
+        <div className="flex items-center justify-between w-full gap-2 min-w-0 py-0.5">
+          {/* اسم العميل كاملاً دون اقتطاع */}
+          <div className="flex-1 min-w-0 pr-0.5 text-right">
+            <h4 
+              className={cn(
+                "font-black tracking-tight leading-snug break-words text-slate-900",
+                dynamicSize,
+                cardStyleConfig.customerFontWeight || 'font-black',
+                extraCustomerClass
+              )} 
+              style={{ color: cardStyleConfig.customerTextColor }}
+              title={customerName}
+            >
+              {customerName}
+            </h4>
+          </div>
+
+          {/* أيقونة الاتصال بموقع ثابت على طرف الصف الثاني مهما تغير حجم الاسم */}
+          <div className="shrink-0 flex items-center justify-center self-center" onClick={(e) => e.stopPropagation()}>
+            {hasPhone ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleCallCustomer(customerName, customerPhone, task.customerPhones, task);
+                }}
+                className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-700 border border-emerald-200/90 transition-all shadow-2xs cursor-pointer active:scale-95 flex items-center justify-center shrink-0"
+                title={`اتصال بالعميل (${customerPhone || 'هاتف مسجل'})`}
+              >
+                <PhoneCall className="w-4 h-4 shrink-0" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleOpenPhoneManagerForTask(task);
+                }}
+                className="w-8 h-8 rounded-full bg-red-50 text-red-600 hover:bg-red-100 border border-red-200/90 transition-all shadow-2xs cursor-pointer active:scale-95 flex items-center justify-center shrink-0 animate-pulse"
+                title="لا يوجد رقم هاتف - انقر لإضافة رقم"
+              >
+                <PhoneCall className="w-4 h-4 shrink-0" />
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    const renderCardRow3 = () => {
+      return (
+        <div className="flex items-center justify-between w-full gap-2 min-w-0 py-0.5">
+          {/* الموديلات: طراز وموديل الجهاز */}
+          <div className="flex items-center gap-1.5 min-w-0 flex-1 text-right">
+            <span className="text-slate-400 shrink-0">
+              {renderTaskDeviceIcon(task, "w-4 h-4")}
+            </span>
+            <p 
+              className={cn(
+                "font-bold truncate text-slate-700",
+                cardStyleConfig.deviceTextSize || 'text-xs sm:text-sm',
+                cardStyleConfig.deviceFontWeight || 'font-bold'
+              )} 
+              style={{ color: cardStyleConfig.deviceTextColor }}
+              title={getDisplayDeviceStr(task)}
+            >
+              {getDisplayDeviceStr(task)}
+            </p>
+          </div>
+
+          {/* اختصار قائمة الحالة المنسدلة والإيصال */}
+          <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+            {renderInteractiveStatusBadge("text-[10px] font-black px-2.5 py-1 rounded-xl shadow-xs border inline-flex items-center gap-1.5 bg-white/90 border-slate-205 text-slate-800", false)}
+            {showR && (
+              <div 
+                className="bg-white/50 p-1 rounded-full relative w-fit flex-shrink-0 cursor-pointer border border-slate-300/30"
+                title="الإيصال"
+              >
+                {renderReceipt(task)}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
     if (viewMode === 'custom_style') {
       const orderMap = cardStyleConfig.fieldOrder || ['customer', 'device', 'issue', 'financials'];
       
@@ -13353,117 +14789,19 @@ export default function App() {
         if (fieldKey === 'customer' && showC) {
           return (
             <div key="customer" className="w-full flex flex-col gap-1">
-              {/* صف الأيقونات العلوية: كل حساب العميل وكل مهام العميل بصف واحد أعلى اسم العميل وتاريخ الإنشاء */}
-              {renderCustomerTopActions()}
+              {/* الصف الأول: أزرار حساب ومهام على الركن الأيمن وتفاصيل الوقت والتاريخ جوارهما */}
+              {renderCardRow1()}
 
-              {/* صف اسم العميل وتاريخ إنشاء المهمة */}
-              <div className="flex justify-between items-start w-full gap-2 min-w-0">
-                {/* اسم العميل وبمنتصفه أسفله أيقونة الاتصال مع تصغير تلقائي للنص */}
-                <div className="flex flex-col items-center justify-center text-center min-w-0 flex-1 max-w-[65%]">
-                  <h4 
-                    className={cn(
-                      "font-black truncate w-full text-center transition-all",
-                      (task.customer || '').length > 25 ? "text-[10px]" :
-                      (task.customer || '').length > 18 ? "text-xs" :
-                      (task.customer || '').length > 12 ? "text-sm" :
-                      (cardStyleConfig.customerTextSize || 'text-base'),
-                      cardStyleConfig.customerFontWeight || 'font-black'
-                    )} 
-                    style={{ color: cardStyleConfig.customerTextColor }}
-                    title={task.customer}
-                  >
-                    {task.customer}
-                  </h4>
-                  {/* أيقونة الاتصال أسفله وبمنتصفه */}
-                  <div className="mt-1 flex items-center justify-center">
-                    {hasCustomerPhone(task) ? (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleCallCustomer(task.customer, undefined, task.customerPhones, task);
-                        }}
-                        className="p-1 rounded-full bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200/80 transition-colors shadow-xs cursor-pointer active:scale-95 shrink-0 inline-flex items-center justify-center"
-                        title="اتصال بالعميل عبر الهاتف"
-                      >
-                        <PhoneCall className="w-3.5 h-3.5 shrink-0" />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleOpenPhoneManagerForTask(task);
-                        }}
-                        className="p-1 rounded-full bg-red-50 text-red-600 hover:bg-red-100 border border-red-200/80 transition-colors shadow-xs cursor-pointer active:scale-95 shrink-0 inline-flex items-center justify-center animate-pulse"
-                        title="لا يوجد رقم هاتف - انقر لإضافة رقم"
-                      >
-                        <PhoneCall className="w-3.5 h-3.5 shrink-0" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* تاريخ إنشاء المهمة مقيد ومثبت مع شارة الحالة لمنع الإزاحة نهائياً */}
-                <div className="flex flex-col items-end gap-1.5 shrink-0 min-w-fit self-center">
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {renderCreationTimeBadge()}
-                    {currentPage === 'tasks' && (
-                      <button
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const prev = await db.tasks.get(task.id!);
-                          if (task.isArchived) {
-                            const update = {
-                              updatedAt: new Date().toISOString(),
-                              isArchived: false,
-                              hiddenAt: undefined
-                            };
-                            await db.tasks.update(task.id!, update);
-                            if (prev) {
-                              await logAudit('edit', 'task', task.id, task.customer || `مهمة #${task.id}`, 'استعادة المهمة من الأرشيف للقائمة النشطة', prev, { ...prev, ...update, id: task.id });
-                            }
-                          } else {
-                            const update = {
-                              isArchived: true,
-                              hiddenAt: undefined,
-                              updatedAt: new Date().toISOString()
-                            };
-                            await db.tasks.update(task.id!, update);
-                            if (prev) {
-                              await logAudit('edit', 'task', task.id, task.customer || `مهمة #${task.id}`, 'أرشفة المهمة', prev, { ...prev, ...update, id: task.id });
-                            }
-                          }
-                        }}
-                        className="bg-white/50 p-1 rounded-full hover:bg-slate-200 transition-colors cursor-pointer border border-slate-300/30 shrink-0"
-                        title={task.isArchived ? 'استعادة للقائمة النشطة' : 'أرشفة نهائية'}
-                      >
-                        {task.isArchived ? <RefreshCw className="w-3.5 h-3.5 text-amber-600" /> : <Archive className="w-3.5 h-3.5 text-slate-500" />}
-                      </button>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {renderInteractiveStatusBadge(undefined, false)}
-                    {showR && (
-                      <div 
-                        className="bg-white/50 p-1 rounded-full relative w-fit flex-shrink-0 cursor-pointer"
-                        title="الإيصال"
-                      >
-                        {renderReceipt(task)}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
+              {/* الصف الثاني: اسم العميل كاملاً وفي طرفه أيقونة الاتصال بموقع ثابت */}
+              {renderCardRow2()}
             </div>
           );
         }
         if (fieldKey === 'device' && showD) {
           return (
-            <div key="device" className="w-full text-right">
-              <p className={cn(cardStyleConfig.deviceTextSize || 'text-sm', cardStyleConfig.deviceFontWeight || 'font-extrabold')} style={{ color: cardStyleConfig.deviceTextColor }}>
-                {getDisplayDeviceStr(task)}
-              </p>
+            <div key="device" className="w-full">
+              {/* الصف الثالث: الموديلات واختصار قائمة الحالة المنسدلة */}
+              {renderCardRow3()}
             </div>
           );
         }
@@ -13479,15 +14817,15 @@ export default function App() {
         if (fieldKey === 'financials') {
           return (
             <div key="financials">
-              {showCo && renderFinancials("mt-2 pt-2 border-t border-slate-200/50")}
-              
+              {/* الصف الرابع: التكلفة والواصل والمتبقي */}
+              {showCo && renderFinancials("mt-1.5 pt-1.5 border-t border-slate-200/50")}
             </div>
           );
         }
         return null;
       };
 
-       const cardBgStyle = getCardBackgroundStyle(task, cardStyleConfig, uiSettings);
+      const cardBgStyle = getCardBackgroundStyle(task, cardStyleConfig, uiSettings);
 
       return (
         <div 
@@ -13510,62 +14848,27 @@ export default function App() {
     if (viewMode === 'colored') {
        const cardBgStyle = getCardBackgroundStyle(task, cardStyleConfig, uiSettings);
        return (
-         <div key={task.id} style={cardBgStyle} className={cn("relative group transition-all cursor-pointer border-2 rounded-2xl p-4 hover:shadow-lg mb-4 w-full")} onClick={() => handleEditTask(task)}>
+         <div key={task.id} style={cardBgStyle} className={cn("relative group transition-all cursor-pointer border-2 rounded-2xl p-4 hover:shadow-lg mb-4 w-full text-right")} onClick={() => handleEditTask(task)}>
            {checkboxNode}
            <div className="flex flex-col gap-2">
-             {showC && renderCustomerTopActions()}
-             <div className="flex justify-between items-start gap-2 min-w-0">
-               {showC && (
-                 <div className="flex-1 min-w-0 max-w-[65%]">
-                   {renderCustomerNameAndPhone(task.customer, "font-bold text-lg")}
-                 </div>
-               )}
-               <div className="flex flex-col items-end gap-1.5">
-                 <div className="flex items-center gap-1.5">
-                   {renderCreationTimeBadge()}
-                   {currentPage === 'tasks' && (
-                     <button
-                       onClick={async (e) => {
-                         e.stopPropagation();
-                         const prev = await db.tasks.get(task.id!);
-                         if (task.isArchived) {
-                           const update = {
-                             updatedAt: new Date().toISOString(),
-                             isArchived: false,
-                             hiddenAt: undefined
-                           };
-                           await db.tasks.update(task.id!, update);
-                           if (prev) {
-                             await logAudit('edit', 'task', task.id, task.customer || `مهمة #${task.id}`, 'استعادة المهمة من الأرشيف للقائمة النشطة', prev, { ...prev, ...update, id: task.id });
-                           }
-                         } else {
-                           const update = {
-                             isArchived: true,
-                             hiddenAt: undefined,
-                             updatedAt: new Date().toISOString()
-                           };
-                           await db.tasks.update(task.id!, update);
-                           if (prev) {
-                             await logAudit('edit', 'task', task.id, task.customer || `مهمة #${task.id}`, 'أرشفة المهمة', prev, { ...prev, ...update, id: task.id });
-                           }
-                         }
-                       }}
-                       className="bg-white/50 p-1 rounded-full hover:bg-slate-200 transition-colors cursor-pointer border border-slate-300/30"
-                       title={task.isArchived ? 'استعادة للقائمة النشطة' : 'أرشفة نهائية'}
-                     >
-                       {task.isArchived ? <RefreshCw className="w-3.5 h-3.5 text-amber-600" /> : <Archive className="w-3.5 h-3.5 text-slate-500" />}
-                     </button>
-                   )}
-                 </div>
-                 <div className="flex items-center gap-1.5">
-                   {renderInteractiveStatusBadge("text-[10px] font-black px-2.5 py-1 rounded-xl shadow-xs border inline-flex items-center gap-1.5 bg-white/80 border-slate-205 text-slate-800", false)}
-                   {showR && <div className="bg-white/50 p-1 rounded-full relative w-fit flex-shrink-0 cursor-pointer" title="الإيصال">{renderReceipt(task)}</div>}
-                 </div>
+             {/* الصف الأول: أزرار حساب ومهام على الركن الأيمن وتفاصيل الوقت والتاريخ جوارهما */}
+             {renderCardRow1()}
+
+             {/* الصف الثاني: اسم العميل كاملاً وفي طرفه أيقونة الاتصال بموقع ثابت */}
+             {showC && renderCardRow2("font-bold text-lg")}
+
+             {/* الصف الثالث: الموديلات واختصار قائمة الحالة المنسدلة */}
+             {showD && renderCardRow3()}
+
+             {/* وصف المشكلة إن وجد */}
+             {showI && task.issue && (
+               <div className={cn(cardWarningClasses, "text-xs opacity-90 px-2.5 py-1 bg-amber-50/50 rounded-lg border border-amber-200/40")}>
+                 {renderColoredText(task.issue)}
                </div>
-             </div>
-             {showD && <p className="text-sm opacity-90 font-medium">{getDisplayDeviceStr(task)}</p>}
-             {showI && task.issue && <p className={cn(cardWarningClasses, "text-xs opacity-80 mt-1")}>{renderColoredText(task.issue)}</p>}
-             {renderFinancials("mt-2 pt-2 border-t border-black/10")}
+             )}
+
+             {/* الصف الرابع: التكلفة والواصل والمتبقي */}
+             {renderFinancials("mt-1.5 pt-1.5 border-t border-black/10")}
            </div>
          </div>
        );
@@ -13764,8 +15067,8 @@ export default function App() {
             )}
           </div>
           
-          <div className="bg-slate-900 text-amber-400 p-2.5 rounded-xl border border-black flex justify-between items-center text-xs flex-wrap gap-2.5 font-bold">
-            {renderInteractiveStatusBadge("text-[10px] font-black px-2.5 py-1 rounded-xl shadow-xs border inline-flex items-center gap-1.5 bg-slate-950 text-amber-400 border-slate-800", false)}
+          <div className="bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 flex justify-between items-center text-xs flex-wrap gap-2.5 font-bold">
+            {renderInteractiveStatusBadge("text-[10px] font-black px-2.5 py-1 rounded-xl shadow-xs border inline-flex items-center gap-1.5 bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800", false)}
             {renderFinancials("mt-2 pt-2 border-t border-slate-200/50")}
           </div>
         </div>
@@ -14372,7 +15675,9 @@ export default function App() {
               className="flex items-center gap-1.5 p-2 rounded-xl border text-right transition-all text-xs font-bold active:scale-95 cursor-pointer shadow-xs justify-center md:justify-start"
               style={{ backgroundColor: toggleBg, borderColor: panelBorder, color: panelText }}
             >
-              <Database className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+              <div className="p-1 rounded-md bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 shrink-0">
+                <Database className="w-3.5 h-3.5 stroke-[2.5]" />
+              </div>
               <span className="truncate">النسخ الاحتياطي</span>
             </button>
             {/* Button B: Exchange Rates */}
@@ -14656,6 +15961,82 @@ export default function App() {
             ${uiSettings.appFontFamily ? `font-family: ${uiSettings.appFontFamily} !important;` : ''}
           }
 
+          /* 1. التبويبات الرئيسية */
+          ${uiSettings.mainTabsFontFamily ? `
+            .app-main-tabs, .app-main-tabs button, nav button, [data-element="main-tab"], .main-tabs-container button {
+              font-family: ${uiSettings.mainTabsFontFamily} !important;
+            }
+          ` : ''}
+          ${uiSettings.mainTabsFontSize ? `
+            .app-main-tabs, .app-main-tabs button, nav button, [data-element="main-tab"], .main-tabs-container button {
+              font-size: ${uiSettings.mainTabsFontSize} !important;
+            }
+          ` : ''}
+          ${uiSettings.mainTabsFontWeight ? `
+            .app-main-tabs, .app-main-tabs button, nav button, [data-element="main-tab"], .main-tabs-container button {
+              font-weight: ${uiSettings.mainTabsFontWeight === 'font-black' ? '900' : uiSettings.mainTabsFontWeight === 'font-bold' ? '700' : '400'} !important;
+            }
+          ` : ''}
+
+          /* 2. التفاصيل والقوائم والبطاقات */
+          ${uiSettings.detailsFontFamily ? `
+            .app-details-text, .app-card-details, [data-element="details"], .task-details-text, .details-text {
+              font-family: ${uiSettings.detailsFontFamily} !important;
+            }
+          ` : ''}
+          ${uiSettings.detailsFontSize ? `
+            .app-details-text, .app-card-details, [data-element="details"], .task-details-text, .details-text {
+              font-size: ${uiSettings.detailsFontSize} !important;
+            }
+          ` : ''}
+
+          /* 3. التقارير والكشوفات الرسمية */
+          ${uiSettings.reportsFontFamily ? `
+            .app-report-text, .report-container-wrapper, #report-result-area, [data-element="report"], .report-text {
+              font-family: ${uiSettings.reportsFontFamily} !important;
+            }
+          ` : ''}
+          ${uiSettings.reportsFontSize ? `
+            .app-report-text, .report-container-wrapper, #report-result-area, [data-element="report"], .report-text {
+              font-size: ${uiSettings.reportsFontSize} !important;
+            }
+          ` : ''}
+
+          /* 4. النصوص المدخلة يدوياً */
+          ${uiSettings.inputsFontFamily ? `
+            textarea, input[type="text"]:not([data-element="number"]), input[type="search"] {
+              font-family: ${uiSettings.inputsFontFamily} !important;
+            }
+          ` : ''}
+          ${uiSettings.inputsFontSize ? `
+            textarea, input[type="text"]:not([data-element="number"]), input[type="search"] {
+              font-size: ${uiSettings.inputsFontSize} !important;
+            }
+          ` : ''}
+
+          /* 5. الأرقام والمبالغ والتكاليف والحسابات */
+          ${uiSettings.numbersFontFamily ? `
+            .app-number-text, [data-element="number"], .amount-display, input[type="number"], input[inputmode="decimal"], input[inputmode="numeric"], .font-mono {
+              font-family: ${uiSettings.numbersFontFamily} !important;
+            }
+          ` : ''}
+          ${uiSettings.numbersFontSize ? `
+            .app-number-text, [data-element="number"], .amount-display, input[type="number"], input[inputmode="decimal"], input[inputmode="numeric"], .font-mono {
+              font-size: ${uiSettings.numbersFontSize} !important;
+            }
+          ` : ''}
+          ${uiSettings.numbersWeight ? `
+            .app-number-text, [data-element="number"], .amount-display, input[type="number"], input[inputmode="decimal"], input[inputmode="numeric"], .font-mono {
+              font-weight: ${uiSettings.numbersWeight === 'font-black' ? '900' : uiSettings.numbersWeight === 'font-bold' ? '700' : '400'} !important;
+            }
+          ` : ''}
+
+          ${uiSettings.globalFontSizeScale && uiSettings.globalFontSizeScale !== '1.0' ? `
+            #app-root-container {
+              zoom: ${uiSettings.globalFontSizeScale};
+            }
+          ` : ''}
+
           ${uiSettings.globalTextSize ? `
             html {
               font-size: ${
@@ -14868,12 +16249,7 @@ export default function App() {
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setIsSidebarOpen(false);
-                                  setTransactionType('income');
-                                  setEditingId(null);
-                                  setTransactionDescription('');
-                                  setTransactionCategory('');
-                                  setTransactionCustomerName('');
-                                  setIsTransactionModalOpen(true);
+                                  openAddTransactionModal('income');
                                 }}
                                 className="flex-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg py-1.5 px-2 text-[10px] font-black flex items-center justify-center gap-1 cursor-pointer transition-all active:scale-95 shadow-sm border border-emerald-200"
                               >
@@ -14885,12 +16261,7 @@ export default function App() {
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setIsSidebarOpen(false);
-                                  setTransactionType('expense');
-                                  setEditingId(null);
-                                  setTransactionDescription('');
-                                  setTransactionCategory('');
-                                  setTransactionCustomerName('');
-                                  setIsTransactionModalOpen(true);
+                                  openAddTransactionModal('expense');
                                 }}
                                 className="flex-1 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg py-1.5 px-2 text-[10px] font-black flex items-center justify-center gap-1 cursor-pointer transition-all active:scale-95 shadow-sm border border-red-200"
                               >
@@ -14995,7 +16366,9 @@ export default function App() {
             />
           </div>
 
+          {/* Remove Omni Quick Preview from global main header so it appears strictly in Accounts page */}
           <button 
+            type="button"
             onClick={() => setIsSettingsModalOpen(true)} 
             className="w-8 h-8 flex items-center justify-center bg-slate-100 text-slate-600 rounded-lg hover:bg-emerald-500 hover:text-white transition-all shadow-2xs border border-slate-200/80 active:scale-95 shrink-0"
             title="إعدادات النظام والنسخ الاحتياطي"
@@ -15034,11 +16407,11 @@ export default function App() {
                     onClick={() => setShowNotificationsDropdown(false)} 
                   />
                   <motion.div 
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
+                    initial={{ opacity: 0, y: -20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
                     className={cn(
-                      "fixed inset-0 m-auto w-[80vw] h-[80vh] max-w-[80vw] max-h-[80vh] bg-white border border-emerald-500/25 rounded-3xl shadow-2xl z-[170] overflow-hidden text-right flex flex-col"
+                      "fixed top-0 left-0 right-0 w-full h-[85vh] max-h-[85vh] bg-white dark:bg-slate-900 border-b border-emerald-500/30 rounded-b-[28px] shadow-2xl z-[170] overflow-hidden text-right flex flex-col"
                     )}
                     dir="rtl"
                   >
@@ -15071,6 +16444,218 @@ export default function App() {
                     )}
 
                     <div className="max-h-[calc(70vh-130px)] md:max-h-[380px] overflow-y-auto divide-y divide-slate-100 flex-1">
+                      {/* شريط طلب وتفعيل أذونات إشعارات ورسائل SMS البنكية والمالية */}
+                      <div className="p-2.5 bg-gradient-to-r from-indigo-50 to-sky-50 dark:from-slate-800 dark:to-slate-900 border-b border-indigo-100 dark:border-slate-700 flex items-center justify-between text-[10.5px] font-bold">
+                        <div className="flex items-center gap-1.5 text-indigo-950 dark:text-indigo-200">
+                          <BellRing className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                          <span>صلاحيات الإشعارات ورسائل البنوك:</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            requestNotificationAndSmsPermissionsNative();
+                            openNotificationListenerSettingsNative();
+                            toast.success('تم فتح طلب الصلاحيات وإعدادات الهاتف بنجاح');
+                          }}
+                          className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[9.5px] font-black shadow-xs flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+                          title="تفعيل صلاحيات قراءة الإشعارات والرسائل النصية SMS"
+                        >
+                          <span>تفعيل الصلاحيات 🔔</span>
+                        </button>
+                      </div>
+
+                      {/* 0. Incoming Financial Notifications & SMS Suggestions (في بداية قائمة الإشعارات الرئيسية) */}
+                      {activeFinancialAlerts.length > 0 && (
+                        <div className="bg-emerald-50/40 border-b-2 border-emerald-300">
+                          <div className="px-3.5 py-2 text-[11px] font-black text-emerald-950 bg-gradient-to-r from-emerald-100 via-teal-100 to-emerald-100 border-b border-emerald-300 shadow-xs flex items-center justify-between sticky top-0 z-20">
+                            <div className="flex items-center gap-1.5">
+                              <Receipt className="w-4 h-4 text-emerald-700 animate-pulse" />
+                              <span>اقتراحات إيداعات وتحويلات البنوك والرسائل ({activeFinancialAlerts.length})</span>
+                            </div>
+                            <span className="text-[9.5px] bg-emerald-600 text-white px-2 py-0.5 rounded-full font-extrabold">
+                              إشعارات ذكية
+                            </span>
+                          </div>
+
+                          <div className="divide-y divide-emerald-200/60 p-2 space-y-2">
+                            {activeFinancialAlerts.map(alert => {
+                              const isDeposit = alert.type === 'deposit';
+                              const formattedAmount = `${Number(alert.amount).toLocaleString()} ${alert.currency}`;
+
+                              return (
+                                <div 
+                                  key={alert.id}
+                                  className={cn(
+                                    "p-3 rounded-2xl border-2 transition-all shadow-xs text-right space-y-2.5",
+                                    isDeposit 
+                                      ? "bg-white dark:bg-slate-900 border-emerald-300 dark:border-emerald-700" 
+                                      : "bg-white dark:bg-slate-900 border-indigo-300 dark:border-indigo-700"
+                                  )}
+                                >
+                                  {/* Header: Type Badge, Date, Dismiss */}
+                                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={cn(
+                                        "px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 shadow-2xs",
+                                        isDeposit 
+                                          ? "bg-emerald-600 text-white" 
+                                          : "bg-indigo-600 text-white"
+                                      )}>
+                                        {isDeposit ? <Download className="w-3 h-3 stroke-[2.5]" /> : <Upload className="w-3 h-3 stroke-[2.5]" />}
+                                        <span>{isDeposit ? 'إشعار إيداع وارد 📥' : 'إشعار تحويل صادر 📤'}</span>
+                                      </span>
+                                      {alert.sourceEntity && (
+                                        <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700">
+                                          {alert.sourceEntity}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[10px] text-slate-400 font-bold">
+                                        {formatToDateTimeLocal(alert.timestamp).replace('T', ' ')}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDismissFinancialAlert(alert.id)}
+                                        className="p-1 rounded-lg hover:bg-rose-100 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                                        title="تجاهل وإخفاء التنبيه"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Details: Party & Amount */}
+                                  <div className="bg-slate-50 dark:bg-slate-800/80 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700 flex items-center justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <div className="text-xs font-black text-slate-900 dark:text-white truncate">
+                                        {isDeposit ? 'المودع:' : 'المحول له:'} <span className="text-emerald-700 dark:text-emerald-300">{alert.partyName}</span>
+                                      </div>
+                                      {alert.referenceNumber && (
+                                        <div className="text-[10px] text-slate-500 font-bold truncate">
+                                          مرجع: {alert.referenceNumber}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="text-left shrink-0">
+                                      <div className={cn(
+                                        "text-sm sm:text-base font-black dir-ltr",
+                                        isDeposit ? "text-emerald-600 dark:text-emerald-400" : "text-indigo-600 dark:text-indigo-400"
+                                      )}>
+                                        {formattedAmount}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Cash Account Selection */}
+                                  {cashAccounts.length > 0 && (
+                                    <div className="flex items-center justify-between gap-1.5 text-[10.5px] bg-slate-100/70 dark:bg-slate-800 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                                      <label className="font-black text-slate-700 dark:text-slate-300 flex items-center gap-1 shrink-0">
+                                        <Building2 className="w-3 h-3 text-emerald-600" />
+                                        <span>الحساب المستهدف:</span>
+                                      </label>
+                                      <select
+                                        value={activeSuggestionAccountInDropdown[alert.id] || alert.selectedAccountId || (cashAccounts[0]?.id || '')}
+                                        onChange={(e) => setActiveSuggestionAccountInDropdown(prev => ({
+                                          ...prev,
+                                          [alert.id]: Number(e.target.value)
+                                        }))}
+                                        className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-0.5 font-bold text-slate-800 dark:text-slate-200 text-[10.5px] max-w-[65%] truncate outline-none"
+                                      >
+                                        {cashAccounts.map((acc) => (
+                                          <option key={acc.id} value={acc.id}>
+                                            {acc.name} ({Number(acc.balance || 0).toLocaleString()} {acc.currency || 'RY'})
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  )}
+
+                                  {/* Direct Action Buttons */}
+                                  {isDeposit ? (
+                                    <div className="space-y-1.5 pt-0.5">
+                                      <div className="text-[10px] font-black text-slate-600 dark:text-slate-300">
+                                        خيارات إضافة وقيد الإيداع:
+                                      </div>
+                                      <div className="grid grid-cols-3 gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleExecuteFinancialAlert(alert.id, 'cash_account')}
+                                          className="p-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10.5px] flex items-center justify-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
+                                          title="قيد إيراد مباشر لحساب الخزينة/البنك"
+                                        >
+                                          <Wallet className="w-3.5 h-3.5 shrink-0" />
+                                          <span>لحساب نقدي</span>
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => handleExecuteFinancialAlert(alert.id, 'customer')}
+                                          className="p-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-black text-[10.5px] flex items-center justify-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
+                                          title="قيد إيراد وسداد لحساب العميل"
+                                        >
+                                          <UserCheck className="w-3.5 h-3.5 shrink-0" />
+                                          <span>لعميل</span>
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => handleExecuteFinancialAlert(alert.id, 'inventory')}
+                                          className="p-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-black text-[10.5px] flex items-center justify-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
+                                          title="قيد إيراد مبيعات قطع غيار ومخزون"
+                                        >
+                                          <Package className="w-3.5 h-3.5 shrink-0" />
+                                          <span>للمخزون</span>
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="space-y-1.5 pt-0.5">
+                                      <div className="text-[10px] font-black text-slate-600 dark:text-slate-300">
+                                        خيارات إنشاء وقيد المصروف:
+                                      </div>
+                                      <div className="grid grid-cols-2 gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleExecuteFinancialAlert(alert.id, 'account_expense')}
+                                          className="p-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-[10.5px] flex items-center justify-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
+                                          title="إنشاء مصروف يخصم من الحساب النقدي"
+                                        >
+                                          <ArrowUpRight className="w-3.5 h-3.5 shrink-0" />
+                                          <span>مصروف لحساب نقدي</span>
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => handleExecuteFinancialAlert(alert.id, 'customer_expense')}
+                                          className="p-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-[10.5px] flex items-center justify-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
+                                          title="إنشاء مصروف لعميل أو مورد"
+                                        >
+                                          <UserCheck className="w-3.5 h-3.5 shrink-0" />
+                                          <span>مصروف لعميل/مورد</span>
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Secondary footer: Open in Assistant chat */}
+                                  <div className="flex items-center justify-end pt-1 border-t border-slate-100 dark:border-slate-800">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenAlertInAssistant(alert)}
+                                      className="text-[10px] font-black text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 flex items-center gap-1 hover:underline cursor-pointer"
+                                    >
+                                      <MessageSquare className="w-3 h-3" />
+                                      <span>فتح ومعالجة في نافذة دردشة المساعد 💬</span>
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
                       {/* 1. Urgent task executions */}
                       {taskExecutionAlerts.length > 0 && (
                         <div className="bg-red-50/30">
@@ -15111,7 +16696,7 @@ export default function App() {
                                     {task.customer}
                                   </span>
                                   <span className="text-[10px] text-slate-500 font-bold truncate">
-                                    جهاز: {getDisplayDeviceStr(task)} | فني: {task.executionTime ? new Date(task.executionTime).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }) : ''}
+                                    جهاز: {getDisplayDeviceStr(task)} | موعد: {task.executionTime ? formatExecutionTimeArabic(task.executionTime) : ''}
                                   </span>
                                 </div>
                                 <span className="shrink-0 bg-amber-100 text-amber-800 font-black text-[9px] py-0.5 px-2 rounded-md border border-amber-250 pointer-events-none">
@@ -15163,7 +16748,7 @@ export default function App() {
                                     {task.customer}
                                   </span>
                                   <span className="text-[10px] text-slate-500 font-bold truncate">
-                                    جهاز: {getDisplayDeviceStr(task)} | موعد: {task.executionTime ? new Date(task.executionTime).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }) : ''}
+                                    جهاز: {getDisplayDeviceStr(task)} | موعد: {task.executionTime ? formatExecutionTimeArabic(task.executionTime) : ''}
                                   </span>
                                 </div>
                                 <span className="shrink-0 bg-sky-100 text-sky-800 font-black text-[9px] py-0.5 px-2 rounded-md border border-sky-250 pointer-events-none min-w-[70px] text-center">
@@ -15382,6 +16967,17 @@ export default function App() {
                       </div>
                     </div>
                   </motion.div>
+
+                  {/* Bottom 15% empty tap-to-dismiss zone */}
+                  <div 
+                    onClick={() => setShowNotificationsDropdown(false)} 
+                    className="fixed bottom-0 left-0 right-0 h-[15vh] z-[170] cursor-pointer flex items-center justify-center group"
+                  >
+                    <div className="px-4 py-1.5 bg-slate-900/85 hover:bg-slate-900 text-white rounded-full text-[10.5px] font-black border border-slate-700 shadow-xl flex items-center gap-1.5 backdrop-blur-md group-hover:scale-105 transition-all">
+                      <span>انقر هنا لإغلاق الإشعارات (المساحة المتبقية 15%)</span>
+                      <X className="w-3.5 h-3.5 text-slate-300" />
+                    </div>
+                  </div>
                 </>
               )}
             </AnimatePresence>
@@ -15422,34 +17018,36 @@ export default function App() {
                   className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 z-10 transition-colors" 
                 />
                 
-                {/* Voice Recognition Button with Transparent Ripple Waves */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    startVoiceSearch();
-                  }}
-                  className={cn(
-                    "absolute right-10 top-1/2 -translate-y-1/2 p-1.5 rounded-full transition-all z-10 cursor-pointer outline-none flex items-center justify-center",
-                    isListeningVoice 
-                      ? "bg-emerald-500/20 text-emerald-600 ring-2 ring-emerald-500/50 shadow-md shadow-emerald-500/25 scale-105" 
-                      : "hover:bg-slate-100 text-sky-500 hover:text-sky-600"
-                  )}
-                  title={isListeningVoice ? "انقر لإيقاف الاستماع الصوتي" : "البحث الصوتي (تحويل الكلام إلى نص)"}
-                >
-                  {isListeningVoice && (
-                    <>
-                      <span className="absolute -inset-1 rounded-full bg-emerald-500/25 animate-ping pointer-events-none" />
-                      <span className="absolute -inset-2.5 rounded-full bg-emerald-500/15 animate-pulse pointer-events-none" />
-                    </>
-                  )}
-                  <Mic 
+                {/* Voice Recognition Button with Active Listening Ripples and Icon Effects */}
+                <div className="absolute right-10 top-1/2 -translate-y-1/2 z-20 flex items-center">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startVoiceSearch();
+                    }}
                     className={cn(
-                      "w-4 h-4 transition-all relative z-10", 
-                      isListeningVoice ? "text-emerald-600 animate-pulse scale-110 drop-shadow-xs" : "text-sky-500 hover:text-sky-600"
+                      "p-1.5 rounded-full transition-all cursor-pointer outline-none flex items-center justify-center relative",
+                      isListeningVoice 
+                        ? "bg-red-500 text-white ring-2 ring-red-400 shadow-md shadow-red-500/30 scale-105" 
+                        : "hover:bg-slate-100 text-sky-500 hover:text-sky-600"
                     )}
-                  />
-                </button>
+                    title={isListeningVoice ? "إيقاف البحث الصوتي" : "البحث الصوتي (تحويل الكلام إلى نص)"}
+                  >
+                    {isListeningVoice && (
+                      <>
+                        <span className="absolute -inset-1 rounded-full bg-red-500/35 animate-ping pointer-events-none" />
+                        <span className="absolute -inset-2 rounded-full bg-red-500/20 animate-pulse pointer-events-none" />
+                      </>
+                    )}
+                    <Mic 
+                      className={cn(
+                        "w-4 h-4 transition-all relative z-10", 
+                        isListeningVoice ? "text-white animate-bounce drop-shadow-xs" : "text-sky-500 hover:text-sky-600"
+                      )}
+                    />
+                  </button>
+                </div>
 
                 <button
                   type="button"
@@ -15457,32 +17055,11 @@ export default function App() {
                     e.stopPropagation();
                     setVoiceLang(prev => prev === 'ar-SA' ? 'en-US' : 'ar-SA');
                   }}
-                  className="absolute right-16 top-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded text-[10px] font-bold text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors z-10 cursor-pointer"
+                  className="absolute right-[4.5rem] top-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded text-[10px] font-bold text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors z-10 cursor-pointer"
                   title="لغة البحث الصوتي"
                 >
                   {voiceLang === 'ar-SA' ? 'AR' : 'EN'}
                 </button>
-
-                {/* Transparent Live Audio Waveform Indicator (appears while listening and disappears smoothly when done) */}
-                <AnimatePresence>
-                  {isListeningVoice && (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.9, x: -8 }}
-                      animate={{ opacity: 1, scale: 1, x: 0 }}
-                      exit={{ opacity: 0, scale: 0.9, x: -8 }}
-                      transition={{ duration: 0.2 }}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 backdrop-blur-xs border border-emerald-400/30 text-emerald-800 text-[11px] font-bold pointer-events-none select-none z-10 shadow-xs"
-                    >
-                      <div className="flex items-end gap-0.5 h-3">
-                        <span className="w-0.5 bg-emerald-600 rounded-full animate-pulse h-2" style={{ animationDelay: '0ms' }} />
-                        <span className="w-0.5 bg-emerald-600 rounded-full animate-pulse h-3" style={{ animationDelay: '150ms' }} />
-                        <span className="w-0.5 bg-emerald-600 rounded-full animate-pulse h-1.5" style={{ animationDelay: '300ms' }} />
-                        <span className="w-0.5 bg-emerald-600 rounded-full animate-pulse h-2.5" style={{ animationDelay: '450ms' }} />
-                      </div>
-                      <span className="text-[10px] sm:text-xs font-bold text-emerald-700">جاري الاستماع...</span>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
 
                 {/* Clear search query button when not listening */}
                 {!isListeningVoice && searchQuery && (
@@ -15492,34 +17069,37 @@ export default function App() {
                       e.stopPropagation();
                       setSearchQuery('');
                       setIsSearchFocused(false);
+                      setKeepSearchOpen(false);
+                      searchInputRef.current?.blur();
                     }}
-                    className="absolute left-3.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors z-10 cursor-pointer"
-                    title="مسح نص البحث"
+                    className="absolute left-0 top-0 bottom-0 h-full aspect-square bg-red-500 hover:bg-red-600 active:bg-red-700 text-white transition-all cursor-pointer flex items-center justify-center shrink-0 font-bold z-20 rounded-l-2xl"
+                    title="مسح النص وإلغاء المدخلات بنقرة واحدة"
                   >
-                    <X className="w-3.5 h-3.5" />
+                    <X className="w-4.5 h-4.5 stroke-[3]" />
                   </button>
                 )}
 
                 <input 
+                  ref={searchInputRef}
                   type="text" 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onFocus={() => setIsSearchFocused(true)}
-                  placeholder={isListeningVoice ? "تحدث الآن... جاري الاستماع وإدراج النص تلقائياً" : "بحث سريع (العملاء، الهواتف، الملاحظات، المشاكل، المخزن)..."} 
+                  placeholder="بحث سريع في كل بيانات التطبيق (العملاء، الهواتف، الملاحظات، المهام، المخزن)..." 
                   style={{
                     backgroundColor: uiSettings.searchBgColor || '#ffffff',
-                    borderColor: isListeningVoice ? '#10b981' : (uiSettings.searchBorderColor || '#e2e8f0'),
+                    borderColor: isListeningVoice ? '#ef4444' : (uiSettings.searchBorderColor || '#e2e8f0'),
                     color: uiSettings.searchTextColor || '#0f172a',
                     borderRadius: uiSettings.searchBorderRadius === 'rounded-none' ? '0px' :
                                   uiSettings.searchBorderRadius === 'rounded-lg' ? '8px' :
                                   uiSettings.searchBorderRadius === 'rounded-xl' ? '12px' :
                                   uiSettings.searchBorderRadius === 'rounded-2xl' ? '16px' :
                                   uiSettings.searchBorderRadius === 'rounded-3xl' ? '24px' : '16px',
-                    '--tw-ring-color': isListeningVoice ? '#10b981' : (uiSettings.searchFocusRingColor || '#10b981')
+                    '--tw-ring-color': isListeningVoice ? '#ef4444' : (uiSettings.searchFocusRingColor || '#10b981')
                   } as React.CSSProperties}
                   className={cn(
                     "w-full pr-[6rem] py-3 outline-none shadow-xs transition-all focus:ring-2",
-                    isListeningVoice ? "pl-28 ring-2 ring-emerald-500/40 border-emerald-500 bg-emerald-50/10 placeholder-emerald-700/60" : "pl-12",
+                    isListeningVoice ? "pl-14 ring-2 ring-red-500/30 border-red-500 bg-red-50/10" : (searchQuery ? "pl-14" : "pl-12"),
                     uiSettings.searchFontSize || "text-sm",
                     uiSettings.searchBorderWidth === 'border-none' ? 'border-none' :
                     uiSettings.searchBorderWidth === 'border-2' ? 'border-2' :
@@ -16028,14 +17608,16 @@ export default function App() {
                       notes={notes}
                       uiSettings={uiSettings}
                       statusOptions={statusOptions}
-                      onUpdateStatus={(task, newStatus) => {
-                        updateTaskStatus(task, newStatus as TaskStatus);
+                      onUpdateStatus={async (task, newStatus) => {
+                        await updateTaskStatus(task, newStatus as TaskStatus);
                       }}
                       onUpdateExecutionTime={async (task, newTime) => {
                         await db.tasks.update(task.id, {
                           executionTime: newTime,
                           updatedAt: new Date().toISOString()
                         });
+                        const updated = await db.tasks.get(task.id);
+                        if (updated) syncTaskNotification(task.id, updated);
                       }}
                       onEditTask={(task) => {
                         handleEditTask(task);
@@ -16143,12 +17725,7 @@ export default function App() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              setTransactionType('income');
-                              setEditingId(null);
-                              setTransactionDescription('');
-                              setTransactionCategory('');
-                              setTransactionCustomerName('');
-                              setIsTransactionModalOpen(true);
+                              openAddTransactionModal('income');
                             }}
                             className={cn(
                               "absolute z-30 bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-emerald-700 font-black rounded-full shadow-md border border-emerald-200 flex items-center justify-center cursor-pointer transition-all hover:scale-110",
@@ -16162,12 +17739,7 @@ export default function App() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              setTransactionType('expense');
-                              setEditingId(null);
-                              setTransactionDescription('');
-                              setTransactionCategory('');
-                              setTransactionCustomerName('');
-                              setIsTransactionModalOpen(true);
+                              openAddTransactionModal('expense');
                             }}
                             className={cn(
                               "absolute z-30 bg-red-50 hover:bg-red-100 active:scale-95 text-red-700 font-black rounded-full shadow-md border border-red-200 flex items-center justify-center cursor-pointer transition-all hover:scale-110",
@@ -16252,12 +17824,7 @@ export default function App() {
             <>
               <button
                 onClick={() => {
-                  setTransactionType('income');
-                  setEditingId(null);
-                  setTransactionDescription('');
-                  setTransactionCategory('');
-                  setTransactionCustomerName('');
-                  setIsTransactionModalOpen(true);
+                  openAddTransactionModal('income');
                 }}
                 className="absolute -top-3.5 left-4 md:left-6 z-40 flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-2 bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-emerald-700 font-extrabold text-[10px] sm:text-xs rounded-full shadow-lg transition-all border border-emerald-200 hover:scale-105"
                 title="إضافة إيراد سريع (+)"
@@ -16267,12 +17834,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => {
-                  setTransactionType('expense');
-                  setEditingId(null);
-                  setTransactionDescription('');
-                  setTransactionCategory('');
-                  setTransactionCustomerName('');
-                  setIsTransactionModalOpen(true);
+                  openAddTransactionModal('expense');
                 }}
                 className="absolute -top-3.5 right-4 md:right-6 z-40 flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-2 bg-red-50 hover:bg-red-100 active:scale-95 text-red-700 font-extrabold text-[10px] sm:text-xs rounded-full shadow-lg transition-all border border-red-200 hover:scale-105"
                 title="إضافة مصروف سريع (-)"
@@ -16302,6 +17864,7 @@ export default function App() {
                     { id: 'income', label: 'الإيرادات والأرباح المحققة', bullet: 'bg-teal-500', icon: TrendingUp, colorClass: 'text-teal-600', bgClass: 'bg-teal-50/70', borderClass: 'border-teal-200' },
                     { id: 'all_transactions', label: 'سجل كل العمليات المالية', bullet: 'bg-red-500', icon: ArrowUpDown, colorClass: 'text-red-600', bgClass: 'bg-red-50/70', borderClass: 'border-amber-400' },
                     { id: 'inventory', label: 'مخزون قطع الغيار والتوريدات', bullet: 'bg-purple-500', icon: Package, colorClass: 'text-purple-600', bgClass: 'bg-purple-50/70', borderClass: 'border-purple-400' },
+                    { id: 'completion_stats', label: 'معدل إنجاز المهام حسب الفئات', bullet: 'bg-emerald-500', icon: CheckCircle2, colorClass: 'text-emerald-600', bgClass: 'bg-emerald-50/70', borderClass: 'border-emerald-400' },
                     { id: 'reports', label: 'التقارير وعروض الأداء', bullet: 'bg-sky-500', icon: BarChart3, colorClass: 'text-sky-600', bgClass: 'bg-sky-50/70', borderClass: 'border-sky-400' },
                     { id: 'customers', label: 'إدارة العملاء والمسجلين', bullet: 'bg-indigo-500', icon: Users, colorClass: 'text-indigo-600', bgClass: 'bg-indigo-50/75', borderClass: 'border-indigo-400' }
                   ];
@@ -16437,6 +18000,7 @@ export default function App() {
                                                option.id === 'income' ? 'إجمالي الإيرادات والأرباح' :
                                                option.id === 'all_transactions' ? 'تاريخ كامل للعمليات' :
                                                option.id === 'inventory' ? 'متابعة القطع والتوريدات' :
+                                               option.id === 'completion_stats' ? 'معدل الإنجاز للفنيين والعملاء والموديلات' :
                                                option.id === 'reports' ? 'مؤشرات الأداء المالي' :
                                                'دليل بيانات العملاء'}
                                             </span>
@@ -17209,84 +18773,104 @@ export default function App() {
                     </div>
                   )}
 
-                  {dashboardActiveTab === 'customers' && (
-                    <div className="space-y-4 animate-in fade-in duration-300 font-sans">
-                      <div className="flex items-center justify-between border-b border-red-100 pb-2">
-                        <div className="flex items-center gap-1.5 text-amber-700 font-bold">
-                          <Users className="w-5 h-5" />
-                          <h4 className="font-bold text-base">دليل وإدارة العملاء</h4>
-                        </div>
-                        <span className="text-[11px] bg-red-50 text-red-600 font-black border border-red-100 px-2 py-0.5 rounded-full">
-                          {customers.length} عملاء مسجلين
-                        </span>
-                      </div>
-
-                      <div className="divide-y divide-slate-100 max-h-[450px] overflow-y-auto pr-1">
-                        {customers.slice(0, 100).map(c => {
-                          const clientTasks = tasks.filter(t => t.customer === c.name);
-                          const clientDues = clientTasks.reduce((acc, t) => acc + Math.max(0, t.cost - t.deposit), 0);
-                          return (
-                            <div 
-                              key={c.id} 
-                              onClick={() => handleEditCustomer(c)}
-                              className="p-3 flex items-center justify-between hover:bg-red-500/5 transition-all rounded-xl cursor-pointer border border-transparent hover:border-red-100"
-                            >
-                              <div className="flex items-center gap-3">
-                                <div className="w-9 h-9 rounded-xl bg-red-500/15 text-amber-750 flex items-center justify-center font-bold text-sm shadow-sm border border-amber-500/10">
-                                  {c.name.charAt(0)}
-                                </div>
-                                <div>
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <p className="font-sans font-bold text-slate-800 text-sm leading-tight">{c.name}</p>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleViewCustomerAllTasks(c.name);
-                                      }}
-                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 hover:text-blue-800 border border-blue-200/80 transition-all text-[10px] font-black cursor-pointer shadow-2xs active:scale-95 shrink-0 select-none"
-                                      title={`عرض جميع مهام العميل ${c.name}`}
-                                    >
-                                      <ClipboardList className="w-3 h-3 text-blue-600 shrink-0" />
-                                      <span className="whitespace-nowrap">كل مهام العميل</span>
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleOpenCustomerFinancialAccount(c.name);
-                                      }}
-                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 hover:text-emerald-800 border border-emerald-200/80 transition-all text-[10px] font-black cursor-pointer shadow-2xs active:scale-95 shrink-0 select-none"
-                                      title={`عرض كل الحسابات والعمليات المالية للعميل ${c.name}`}
-                                    >
-                                      <Wallet className="w-3 h-3 text-emerald-600 shrink-0" />
-                                      <span className="whitespace-nowrap">كل حساب العميل</span>
-                                    </button>
-                                  </div>
-                                  <p className="text-[10px] text-slate-500 leading-tight mt-0.5">{c.classification || 'عميل عام'}</p>
-                                </div>
-                              </div>
-                              <div className="text-left flex items-center gap-2">
-                                <div className="text-left pr-2">
-                                  {clientDues > 0 ? (
-                                    <span className="text-[10px] font-black px-1.5 py-0.5 bg-red-50 text-red-600 border border-red-100 rounded-lg">
-                                      المتبقي: {formatAmount(clientDues, systemCurrency, exchangeRates)}
-                                    </span>
-                                  ) : (
-                                    <span className="text-[10px] font-bold px-1.5 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-lg">مسدد</span>
-                                  )}
-                                  <p className="text-[9px] text-slate-400 mt-1 font-bold">{clientTasks.length} عمليات صيانة</p>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                        {customers.length === 0 && (
-                          <div className="p-12 text-center text-slate-400 text-sm italic">لا يوجد أي عميل مسجل حالياً.</div>
-                        )}
-                      </div>
+                  {dashboardActiveTab === 'completion_stats' && (
+                    <div className="space-y-4 animate-in fade-in duration-300">
+                      <TaskCompletionStats 
+                        tasks={tasks}
+                        customers={customers}
+                        inventory={inventory}
+                        users={users}
+                        systemCurrency={systemCurrency}
+                        exchangeRates={exchangeRates}
+                        onSelectTask={(task) => {
+                          handleEditTask(task);
+                        }}
+                      />
                     </div>
                   )}
+
+                  {dashboardActiveTab === 'customers' && (() => {
+                    const cashAccNames = new Set(cashAccounts.map(a => (a.name || '').trim().toLowerCase()));
+                    const pureCustomers = customers.filter(c => !cashAccNames.has((c.name || '').trim().toLowerCase()));
+                    return (
+                      <div className="space-y-4 animate-in fade-in duration-300 font-sans">
+                        <div className="flex items-center justify-between border-b border-red-100 pb-2">
+                          <div className="flex items-center gap-1.5 text-amber-700 font-bold">
+                            <Users className="w-5 h-5" />
+                            <h4 className="font-bold text-base">دليل وإدارة العملاء</h4>
+                          </div>
+                          <span className="text-[11px] bg-red-50 text-red-600 font-black border border-red-100 px-2 py-0.5 rounded-full">
+                            {pureCustomers.length} عملاء مسجلين
+                          </span>
+                        </div>
+
+                        <div className="divide-y divide-slate-100 max-h-[450px] overflow-y-auto pr-1">
+                          {pureCustomers.slice(0, 100).map(c => {
+                            const clientTasks = tasks.filter(t => t.customer === c.name);
+                            const clientDues = clientTasks.reduce((acc, t) => acc + Math.max(0, t.cost - t.deposit), 0);
+                            return (
+                              <div 
+                                key={c.id} 
+                                onClick={() => handleEditCustomer(c)}
+                                className="p-3 flex items-center justify-between hover:bg-red-500/5 transition-all rounded-xl cursor-pointer border border-transparent hover:border-red-100"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className="w-9 h-9 rounded-xl bg-red-500/15 text-amber-750 flex items-center justify-center font-bold text-sm shadow-sm border border-amber-500/10">
+                                    {c.name.charAt(0)}
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <p className="font-sans font-bold text-slate-800 text-sm leading-tight">{c.name}</p>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleViewCustomerAllTasks(c.name);
+                                        }}
+                                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 hover:text-blue-800 border border-blue-200/80 transition-all text-[10px] font-black cursor-pointer shadow-2xs active:scale-95 shrink-0 select-none"
+                                        title={`عرض جميع مهام العميل ${c.name}`}
+                                      >
+                                        <ClipboardList className="w-3 h-3 text-blue-600 shrink-0" />
+                                        <span className="whitespace-nowrap">مهام</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleOpenCustomerFinancialAccount(c.name);
+                                        }}
+                                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 hover:text-emerald-800 border border-emerald-200/80 transition-all text-[10px] font-black cursor-pointer shadow-2xs active:scale-95 shrink-0 select-none"
+                                        title={`عرض كل الحسابات والعمليات المالية للعميل ${c.name}`}
+                                      >
+                                        <Wallet className="w-3 h-3 text-emerald-600 shrink-0" />
+                                        <span className="whitespace-nowrap">حساب</span>
+                                      </button>
+                                    </div>
+                                    <p className="text-[10px] text-slate-500 leading-tight mt-0.5">{c.classification || 'عميل عام'}</p>
+                                  </div>
+                                </div>
+                                <div className="text-left flex items-center gap-2">
+                                  <div className="text-left pr-2">
+                                    {clientDues > 0 ? (
+                                      <span className="text-[10px] font-black px-1.5 py-0.5 bg-red-50 text-red-600 border border-red-100 rounded-lg">
+                                        المتبقي: {formatAmount(clientDues, systemCurrency, exchangeRates)}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] font-bold px-1.5 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-lg">مسدد</span>
+                                    )}
+                                    <p className="text-[9px] text-slate-400 mt-1 font-bold">{clientTasks.length} عمليات صيانة</p>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {pureCustomers.length === 0 && (
+                            <div className="p-12 text-center text-slate-400 text-sm italic">لا يوجد أي عميل مسجل حالياً.</div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               </Card>
             </motion.div>
@@ -17357,19 +18941,26 @@ export default function App() {
                           if (searchQuery.trim()) return isTaskMatchingSearchQuery(t, searchQuery);
                           return true;
                         }
-                        const isArchivedTask = t.isArchived || t.status === 'archived';
+                        const isArchivedOrDone = isTaskArchivedOrCompleted(t);
                         if (tasksTabMode === 'archived') {
-                          if (!isArchivedTask) return false;
+                          if (!isArchivedOrDone) return false;
                         } else {
-                          if (isArchivedTask && taskFilter !== 'all' && taskFilter !== 'عرض الكل' && taskFilter !== 'archived' && taskFilter !== 'منتهية') {
+                          if (isArchivedOrDone && taskFilter !== 'all' && taskFilter !== 'عرض الكل' && taskFilter !== 'archived' && taskFilter !== 'منتهية' && taskFilter !== 'completed' && taskFilter !== 'تم التسليم') {
                             return false;
                           }
                         }
-                        const matchesFilter = isTaskMatchingFilter(t, taskFilter);
+                        let matchesFilter = true;
+                        if (tasksTabMode === 'archived') {
+                          if (taskFilter && taskFilter !== 'all' && taskFilter !== 'عرض الكل' && taskFilter !== 'active' && taskFilter !== 'المهام النشطة' && taskFilter !== 'by-status' && taskFilter !== 'حسب الحالة') {
+                            matchesFilter = isTaskMatchingFilter(t, taskFilter);
+                          }
+                        } else {
+                          matchesFilter = isTaskMatchingFilter(t, taskFilter);
+                        }
                         const matchesSearch = isTaskMatchingSearchQuery(t, searchQuery);
                         const taskDate = new Date(t.createdAt);
                         const matchesDate = (!taskStartDate || taskDate >= new Date(taskStartDate + "T00:00:00")) && 
-                                          (!taskEndDate || taskDate <= new Date(taskEndDate + "T23:59:59"));
+                                           (!taskEndDate || taskDate <= new Date(taskEndDate + "T23:59:59"));
                         return matchesFilter && matchesSearch && matchesDate;
                       });
                       return filtered.map(t => generateTaskReportText(t)).join('\n\n' + '━'.repeat(25) + '\n\n');
@@ -17444,15 +19035,22 @@ export default function App() {
                             if (searchQuery.trim()) return isTaskMatchingSearchQuery(t, searchQuery);
                             return true;
                           }
-                          const isArchivedTask = t.isArchived || t.status === 'archived';
+                          const isArchivedOrDone = isTaskArchivedOrCompleted(t);
                           if (tasksTabMode === 'archived') {
-                            if (!isArchivedTask) return false;
+                            if (!isArchivedOrDone) return false;
                           } else {
-                            if (isArchivedTask && taskFilter !== 'all' && taskFilter !== 'عرض الكل' && taskFilter !== 'archived' && taskFilter !== 'منتهية') {
+                            if (isArchivedOrDone && taskFilter !== 'all' && taskFilter !== 'عرض الكل' && taskFilter !== 'archived' && taskFilter !== 'منتهية' && taskFilter !== 'completed' && taskFilter !== 'تم التسليم') {
                               return false;
                             }
                           }
-                          const matchesFilter = isTaskMatchingFilter(t, taskFilter);
+                          let matchesFilter = true;
+                          if (tasksTabMode === 'archived') {
+                            if (taskFilter && taskFilter !== 'all' && taskFilter !== 'عرض الكل' && taskFilter !== 'active' && taskFilter !== 'المهام النشطة' && taskFilter !== 'by-status' && taskFilter !== 'حسب الحالة') {
+                              matchesFilter = isTaskMatchingFilter(t, taskFilter);
+                            }
+                          } else {
+                            matchesFilter = isTaskMatchingFilter(t, taskFilter);
+                          }
                           const matchesSearch = isTaskMatchingSearchQuery(t, searchQuery);
                           const taskDate = new Date(t.createdAt);
                           const matchesDate = (!taskStartDate || taskDate >= new Date(taskStartDate + "T00:00:00")) && 
@@ -17469,15 +19067,22 @@ export default function App() {
                               if (searchQuery.trim()) return isTaskMatchingSearchQuery(t, searchQuery);
                               return true;
                             }
-                            const isArchivedTask = t.isArchived || t.status === 'archived';
+                            const isArchivedOrDone = isTaskArchivedOrCompleted(t);
                             if (tasksTabMode === 'archived') {
-                              if (!isArchivedTask) return false;
+                              if (!isArchivedOrDone) return false;
                             } else {
-                              if (isArchivedTask && taskFilter !== 'all' && taskFilter !== 'عرض الكل' && taskFilter !== 'archived' && taskFilter !== 'منتهية') {
+                              if (isArchivedOrDone && taskFilter !== 'all' && taskFilter !== 'عرض الكل' && taskFilter !== 'archived' && taskFilter !== 'منتهية' && taskFilter !== 'completed' && taskFilter !== 'تم التسليم') {
                                 return false;
                               }
                             }
-                            const matchesFilter = isTaskMatchingFilter(t, taskFilter);
+                            let matchesFilter = true;
+                            if (tasksTabMode === 'archived') {
+                              if (taskFilter && taskFilter !== 'all' && taskFilter !== 'عرض الكل' && taskFilter !== 'active' && taskFilter !== 'المهام النشطة' && taskFilter !== 'by-status' && taskFilter !== 'حسب الحالة') {
+                                matchesFilter = isTaskMatchingFilter(t, taskFilter);
+                              }
+                            } else {
+                              matchesFilter = isTaskMatchingFilter(t, taskFilter);
+                            }
                             const matchesSearch = isTaskMatchingSearchQuery(t, searchQuery);
                             const taskDate = new Date(t.createdAt);
                             const matchesDate = (!taskStartDate || taskDate >= new Date(taskStartDate + "T00:00:00")) && 
@@ -17500,7 +19105,12 @@ export default function App() {
                     <div className="flex items-center p-0.5 bg-slate-100 rounded-xl border border-slate-200/90 shrink-0 h-8.5 sm:h-9 shadow-2xs">
                       <button
                         type="button"
-                        onClick={() => setTasksTabMode('active')}
+                        onClick={() => {
+                          setTasksTabMode('active');
+                          if (taskFilter === 'archived' || taskFilter === 'منتهية' || taskFilter === 'completed' || taskFilter === 'تم التسليم') {
+                            setTaskFilter('all');
+                          }
+                        }}
                         className={cn(
                           "h-full px-2.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer",
                           tasksTabMode === 'active'
@@ -17512,12 +19122,17 @@ export default function App() {
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                         <span>المهام</span>
                         <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-200/80 font-mono text-slate-700">
-                          {tasks.filter(t => !t.isArchived && t.status !== 'archived').length}
+                          {tasks.filter(t => !isTaskArchivedOrCompleted(t)).length}
                         </span>
                       </button>
                       <button
                         type="button"
-                        onClick={() => setTasksTabMode('archived')}
+                        onClick={() => {
+                          setTasksTabMode('archived');
+                          if (taskFilter === 'active' || taskFilter === 'المهام النشطة' || taskFilter === 'by-status' || taskFilter === 'حسب الحالة') {
+                            setTaskFilter('all');
+                          }
+                        }}
                         className={cn(
                           "h-full px-2.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer",
                           tasksTabMode === 'archived'
@@ -17532,7 +19147,7 @@ export default function App() {
                           "px-1.5 py-0.2 rounded-full text-[10px] font-mono",
                           tasksTabMode === 'archived' ? "bg-indigo-700 text-white" : "bg-slate-200/80 text-slate-700"
                         )}>
-                          {tasks.filter(t => t.isArchived || t.status === 'archived').length}
+                          {tasks.filter(t => isTaskArchivedOrCompleted(t)).length}
                         </span>
                       </button>
                     </div>
@@ -17631,16 +19246,23 @@ export default function App() {
                       return true;
                     }
 
-                    const isArchivedTask = t.isArchived || t.status === 'archived';
+                    const isArchivedOrDone = isTaskArchivedOrCompleted(t);
                     if (tasksTabMode === 'archived') {
-                      if (!isArchivedTask) return false;
+                      if (!isArchivedOrDone) return false;
                     } else {
-                      if (isArchivedTask && taskFilter !== 'all' && taskFilter !== 'عرض الكل' && taskFilter !== 'archived' && taskFilter !== 'منتهية') {
+                      if (isArchivedOrDone && taskFilter !== 'all' && taskFilter !== 'عرض الكل' && taskFilter !== 'archived' && taskFilter !== 'منتهية' && taskFilter !== 'completed' && taskFilter !== 'تم التسليم') {
                         return false;
                       }
                     }
 
-                    const matchesFilter = isTaskMatchingFilter(t, taskFilter);
+                    let matchesFilter = true;
+                    if (tasksTabMode === 'archived') {
+                      if (taskFilter && taskFilter !== 'all' && taskFilter !== 'عرض الكل' && taskFilter !== 'active' && taskFilter !== 'المهام النشطة' && taskFilter !== 'by-status' && taskFilter !== 'حسب الحالة') {
+                        matchesFilter = isTaskMatchingFilter(t, taskFilter);
+                      }
+                    } else {
+                      matchesFilter = isTaskMatchingFilter(t, taskFilter);
+                    }
                     const matchesSearch = isTaskMatchingSearchQuery(t, searchQuery);
                     const taskDate = new Date(t.createdAt);
                     const matchesDate = (!taskStartDate || taskDate >= new Date(taskStartDate + "T00:00:00")) && 
@@ -18027,7 +19649,7 @@ export default function App() {
                               title={`عرض جميع مهام العميل ${c.name}`}
                             >
                               <ClipboardList className="w-3 h-3 text-blue-600 shrink-0" />
-                              <span className="whitespace-nowrap">كل مهام العميل</span>
+                              <span className="whitespace-nowrap">مهام</span>
                             </button>
                             <button
                               type="button"
@@ -18039,7 +19661,7 @@ export default function App() {
                               title={`عرض كل الحسابات والعمليات المالية للعميل ${c.name}`}
                             >
                               <Wallet className="w-3 h-3 text-emerald-600 shrink-0" />
-                              <span className="whitespace-nowrap">كل حساب العميل</span>
+                              <span className="whitespace-nowrap">حساب</span>
                             </button>
                           </div>
                           <p className="text-[10px] text-slate-500 font-mono" onClick={() => handleEditCustomer(c)}>{c.phone}</p>
@@ -18134,15 +19756,34 @@ export default function App() {
               exit={{ opacity: 0, x: -20 }}
               className="space-y-4"
             >
-              <div className="flex justify-between items-center bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
-                <div className="flex items-center gap-2">
-                  <div className="bg-blue-500 p-1.5 rounded-lg text-white">
-                    <Wallet className="w-5 h-5" />
+              <div className="flex justify-between items-center bg-white p-2.5 sm:p-3 rounded-2xl border border-slate-100 shadow-xs gap-1.5 sm:gap-2">
+                {/* Right Side: Title in 2 lines */}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="bg-blue-500 p-1.5 rounded-xl text-white shrink-0">
+                    <Wallet className="w-4 h-4 sm:w-5 sm:h-5" />
                   </div>
-                  <h3 className="font-bold text-slate-800 text-lg">الحسابات والمالية والمركز المالي</h3>
+                  <div className="flex flex-col leading-none select-none">
+                    <span className="font-black text-[9.5px] sm:text-xs text-slate-800">الحسابات</span>
+                    <span className="font-black text-[8.5px] sm:text-[10px] text-blue-600">والمالية</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
+
+                {/* Center Side: Omni Quick Preview Button (اللمحة الشاملة في المنتصف) */}
+                <div className="flex items-center justify-center shrink-0">
+                  <button 
+                    type="button"
+                    onClick={() => setIsOmniPreviewModalOpen(true)} 
+                    className="px-2.5 py-1.5 sm:px-3.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white font-black text-[10.5px] sm:text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition-all active:scale-95 border border-emerald-400/30 cursor-pointer whitespace-nowrap"
+                    title="اللمحة الشاملة والمعاينة الخاطفة لكل أركان المركز المالي والنظام"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300 stroke-[2.5] animate-pulse shrink-0" />
+                    <span>اللمحة الشاملة</span>
+                  </button>
+                </div>
+
+                {/* Left Side: Period Filter */}
+                <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+                  <span className="text-[9.5px] sm:text-[10px] font-bold text-slate-500 bg-slate-50 px-1.5 py-1 rounded-md border border-slate-200/60 whitespace-nowrap">
                     {dashboardFilter === 'today' ? 'اليوم' : 
                      dashboardFilter === 'week' ? 'هذا الأسبوع' : 
                      dashboardFilter === 'month' ? 'هذا الشهر' : 
@@ -18152,10 +19793,11 @@ export default function App() {
                   {canChangeFilters && (
                     <button 
                       onClick={() => setIsDashboardFilterModalOpen(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl transition-all text-xs font-bold border border-emerald-100 cursor-pointer"
+                      className="flex items-center gap-1 px-2 py-1.5 sm:px-3 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-xl transition-all text-[10.5px] sm:text-xs font-bold border border-emerald-200 cursor-pointer whitespace-nowrap"
                     >
-                      <Calendar className="w-4 h-4" />
-                      تغيير الفترة
+                      <Calendar className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">تغيير الفترة</span>
+                      <span className="sm:hidden">الفترة</span>
                     </button>
                   )}
                 </div>
@@ -18286,20 +19928,10 @@ export default function App() {
                   appName={appName}
                   onOpenFilterModal={() => setIsDashboardFilterModalOpen(true)}
                   onAddIncome={() => {
-                    setTransactionType("income");
-                    setEditingId(null);
-                    setTransactionDescription("");
-                    setTransactionCategory("");
-                    setTransactionCustomerName("");
-                    setIsTransactionModalOpen(true);
+                    openAddTransactionModal("income");
                   }}
                   onAddExpense={() => {
-                    setTransactionType("expense");
-                    setEditingId(null);
-                    setTransactionDescription("");
-                    setTransactionCategory("");
-                    setTransactionCustomerName("");
-                    setIsTransactionModalOpen(true);
+                    openAddTransactionModal("expense");
                   }}
                   onAddAccount={() => {
                     setAccountEditingId(null);
@@ -18308,6 +19940,7 @@ export default function App() {
                     setAccountStatement("");
                     setIsAccountModalOpen(true);
                   }}
+                  onSelectDailyBondShortcut={handleApplyDailyBondShortcut}
                   onEditTransaction={handleEditTransaction}
                   onDeleteTransaction={deleteTransaction}
                   onEditTask={handleEditTask}
@@ -18379,6 +20012,33 @@ export default function App() {
                   />
                 </div>
 
+                {/* زر سريع ومباشر لإنشاء وتصدير كشف حساب كامل لأي حساب مستقل ومشاركته */}
+                <div className="mb-4 bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border border-emerald-200/90 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-2xs">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                      <FileText className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-black text-slate-900 text-xs sm:text-sm truncate">كشف حساب مالي مستقل كامل وتفصيلي</p>
+                      <p className="text-[10px] sm:text-[11px] text-slate-500 font-bold truncate">توليد وتصدير كشف حساب رسمي مع الرصيد والحركات والمتبقي التراكمي</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (cashAccounts.length > 0 && !selectedAccountIdForReport) {
+                        setSelectedAccountIdForReport(cashAccounts[0].id || null);
+                      }
+                      setIsAccountReportModalOpen(true);
+                    }}
+                    className="flex items-center justify-center gap-1.5 py-2 px-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-black transition-all shadow-xs cursor-pointer shrink-0 active:scale-95"
+                    title="توليد وتصدير كشف حساب وتفاصيل الحركات ومشاركته"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                    <span>إنشاء كشف حساب كامل ومشاركته</span>
+                  </button>
+                </div>
+
                 {/* الصف الأول: فترة التقرير وتصنيف التقرير */}
                 <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
                   <div className="space-y-1">
@@ -18426,6 +20086,7 @@ export default function App() {
                       <option value="inventory_list">قائمة المخزون</option>
                       <option value="system_stats">إحصائيات النظام الشاملة</option>
                       <option value="analytics_ranking">📈 الترتيب وتحليلات الأكثر إيراداً واستخداماً</option>
+                      <option value="task_completion_rates">📊 معدل إنجاز المهام (الفنيين، العملاء، الموديلات، الأصناف)</option>
                     </select>
                   </div>
                 </div>
@@ -18518,7 +20179,7 @@ export default function App() {
                     </select>
                   </div>
                 )}
-                {reportClass !== 'all' && reportClass !== 'financial' && reportClass !== 'customers_list' && reportClass !== 'inventory_list' && reportClass !== 'system_stats' && reportClass !== 'analytics_ranking' && reportClass !== 'sale' && reportClass !== 'purchase' && reportClass !== 'inactive_week' && reportClass !== 'inactive_month' && (
+                {reportClass !== 'all' && reportClass !== 'financial' && reportClass !== 'customers_list' && reportClass !== 'inventory_list' && reportClass !== 'system_stats' && reportClass !== 'analytics_ranking' && reportClass !== 'task_completion_rates' && reportClass !== 'sale' && reportClass !== 'purchase' && reportClass !== 'inactive_week' && reportClass !== 'inactive_month' && (
                   <div className="space-y-1 mt-2.5">
                     <label className="text-xs font-bold text-slate-700">
                       {reportClass === 'account' ? 'اسم الحساب المالي' : (reportClass === 'customer' || reportClass === 'customer_stats') ? 'اسم العميل' : 'القيمة'}
@@ -18575,18 +20236,18 @@ export default function App() {
                   </div>
                 )}
 
-                {/* الصف الثالث: أيقونات تحديث وتصدير وتنسيق ومشاركة وطباعة ونسخ التقرير */}
-                <div className="mt-4 pt-3.5 border-t border-slate-200 grid grid-cols-3 sm:grid-cols-6 gap-2 sm:gap-2.5 print:hidden w-full">
+                {/* الصف الثالث: أيقونات تحديث وتصدير وتنسيق ومشاركة وطباعة ونسخ التقرير في صف واحد متناسق */}
+                <div className="mt-4 pt-3.5 border-t border-slate-200 grid grid-cols-6 gap-1.5 sm:gap-2.5 print:hidden w-full items-center">
                   {/* 1. تحديث */}
                   <button
                     type="button"
                     onClick={generateReport}
                     disabled={isExporting}
-                    className="flex flex-col sm:flex-row items-center justify-center gap-1.5 py-2.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-[11px] sm:text-xs shadow-xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                    className="flex items-center justify-center h-11 sm:h-12 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
                     title="تحديث بيانات التقرير"
+                    aria-label="تحديث بيانات التقرير"
                   >
-                    <RefreshCw className={cn("w-4 h-4", isExporting && "animate-spin")} />
-                    <span>{isExporting ? 'جاري...' : 'تحديث'}</span>
+                    <RefreshCw className={cn("w-5 h-5", isExporting && "animate-spin")} />
                   </button>
 
                   {/* 2. تصدير */}
@@ -18594,22 +20255,22 @@ export default function App() {
                     type="button"
                     onClick={downloadReportAsPDF}
                     disabled={!reportResult || isExporting}
-                    className="flex flex-col sm:flex-row items-center justify-center gap-1.5 py-2.5 px-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[11px] sm:text-xs shadow-xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                    className="flex items-center justify-center h-11 sm:h-12 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
                     title="تصدير وتحميل التقرير كملف PDF"
+                    aria-label="تصدير وتحميل التقرير كملف PDF"
                   >
-                    <Download className="w-4 h-4" />
-                    <span>تصدير</span>
+                    <Download className="w-5 h-5" />
                   </button>
 
                   {/* 3. تنسيق */}
                   <button
                     type="button"
                     onClick={() => setIsReportTemplateModalOpen(true)}
-                    className="flex flex-col sm:flex-row items-center justify-center gap-1.5 py-2.5 px-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl font-black text-[11px] sm:text-xs shadow-xs transition-all active:scale-95 cursor-pointer"
+                    className="flex items-center justify-center h-11 sm:h-12 bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300 rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer"
                     title="تنسيق وتخصيص قالب التقرير"
+                    aria-label="تنسيق وتخصيص قالب التقرير"
                   >
-                    <Palette className="w-4 h-4 text-amber-600" />
-                    <span>تنسيق</span>
+                    <Palette className="w-5 h-5 text-amber-800" />
                   </button>
 
                   {/* 4. مشاركة */}
@@ -18617,11 +20278,11 @@ export default function App() {
                     type="button"
                     onClick={shareReportPdfOnWhatsApp}
                     disabled={!reportResult || isExporting}
-                    className="flex flex-col sm:flex-row items-center justify-center gap-1.5 py-2.5 px-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-black text-[11px] sm:text-xs shadow-xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                    className="flex items-center justify-center h-11 sm:h-12 bg-teal-600 hover:bg-teal-700 text-white rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
                     title="مشاركة التقرير عبر واتساب وتطبيقات الهاتف"
+                    aria-label="مشاركة التقرير"
                   >
-                    <Share2 className="w-4 h-4" />
-                    <span>مشاركة</span>
+                    <Share2 className="w-5 h-5" />
                   </button>
 
                   {/* 5. طباعة */}
@@ -18629,11 +20290,11 @@ export default function App() {
                     type="button"
                     onClick={handlePrint}
                     disabled={!reportResult || isExporting}
-                    className="flex flex-col sm:flex-row items-center justify-center gap-1.5 py-2.5 px-2 bg-slate-700 hover:bg-slate-800 text-white rounded-xl font-black text-[11px] sm:text-xs shadow-xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                    className="flex items-center justify-center h-11 sm:h-12 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
                     title="طباعة التقرير"
+                    aria-label="طباعة التقرير"
                   >
-                    <Printer className="w-4 h-4" />
-                    <span>طباعة</span>
+                    <Printer className="w-5 h-5" />
                   </button>
 
                   {/* 6. نسخ */}
@@ -18641,11 +20302,11 @@ export default function App() {
                     type="button"
                     onClick={copyReportData}
                     disabled={!reportResult || isExporting}
-                    className="flex flex-col sm:flex-row items-center justify-center gap-1.5 py-2.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl font-black text-[11px] sm:text-xs shadow-xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                    className="flex items-center justify-center h-11 sm:h-12 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
                     title="نسخ بيانات التقرير كنص"
+                    aria-label="نسخ بيانات التقرير"
                   >
-                    <Copy className="w-4 h-4 text-slate-600" />
-                    <span>نسخ</span>
+                    <Copy className="w-5 h-5 text-slate-800" />
                   </button>
                 </div>
               </Card>
@@ -18994,6 +20655,22 @@ export default function App() {
                     </div>
                   )}
 
+                  {reportClass === 'task_completion_rates' && (
+                    <div className="space-y-6 mt-6">
+                      <TaskCompletionStats 
+                        tasks={tasks}
+                        customers={customers}
+                        inventory={inventory}
+                        users={users}
+                        systemCurrency={systemCurrency}
+                        exchangeRates={exchangeRates}
+                        onSelectTask={(task) => {
+                          handleEditTask(task);
+                        }}
+                      />
+                    </div>
+                  )}
+
                   {(reportClass === 'all' || reportClass === 'financial') && reportElements.includes('الرسوم البيانية') && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
                       <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
@@ -19119,7 +20796,7 @@ export default function App() {
                         </div>
                       )}
 
-                      {reportResult.tasks.length > 0 && (
+                      {reportResult.tasks.length > 0 && reportClass !== 'task_completion_rates' && (
                         <div className={cn(currentStyles.tableContainer, "transition-all")}>
                           <div className={cn("p-3 sm:p-4 border-b flex items-center justify-between gap-2 flex-wrap", currentStyles.tableHeaderRow)}>
                             <div className="flex items-center gap-2">
@@ -19705,6 +21382,11 @@ export default function App() {
                             type="button"
                             onClick={() => {
                               taskFilterModalConfig.onChange(option.id);
+                              if (option.id === 'archived' && !taskFilterModalConfig.isDashboard) {
+                                setTasksTabMode('archived');
+                              } else if ((option.id === 'active' || option.id === 'by-status') && !taskFilterModalConfig.isDashboard) {
+                                setTasksTabMode('active');
+                              }
                               if (["all", "day", "week", "month", "year"].includes(option.id)) {
                                 if (taskFilterModalConfig.isDashboard) {
                                   setDashboardViewType(option.id as any);
@@ -20361,7 +22043,7 @@ export default function App() {
                     className={cn(
                       "px-3 py-1 rounded-md text-[10px] font-extrabold transition-all select-none cursor-pointer",
                       sidebarPosition === 'left' 
-                        ? "bg-slate-900 text-white shadow-xs" 
+                        ? "bg-emerald-600 text-white shadow-xs" 
                         : "text-slate-600 hover:text-slate-900"
                     )}
                   >
@@ -20373,7 +22055,7 @@ export default function App() {
                     className={cn(
                       "px-3 py-1 rounded-md text-[10px] font-extrabold transition-all select-none cursor-pointer",
                       sidebarPosition === 'right' 
-                        ? "bg-slate-900 text-white shadow-xs" 
+                        ? "bg-emerald-600 text-white shadow-xs" 
                         : "text-slate-600 hover:text-slate-900"
                     )}
                   >
@@ -21019,7 +22701,7 @@ export default function App() {
                   status: 'in-progress' as TaskStatus,
                   createdAt: new Date().toISOString(),
                   updatedAt: new Date().toISOString(),
-                  executionTime: new Date(Date.now() + 24 * 3600 * 1000).toISOString()
+                  executionTime: new Date(Date.now() + 6 * 3600 * 1000).toISOString()
                 };
                 const viewToUse = currentConfigTab === 'card_styling' ? 'custom_style' : ((uiSettings as any).tasksViewMode || 'colored');
                 return renderTaskCardView(mockTask, false);
@@ -21266,15 +22948,55 @@ export default function App() {
           {settingsSearchQuery.trim() === '' ? (
             <div className="space-y-6 overflow-y-auto pr-1 pb-4 flex-1">
               
+              {/* إعدادات المساعد الذكي */}
+              <div className="space-y-1.5">
+                <h4 className="text-[11px] font-bold text-emerald-800 px-1 uppercase flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>المساعد الذكي (Gemini AI)</span>
+                </h4>
+                <div className="bg-white border-2 border-emerald-500/30 rounded-[20px] overflow-hidden shadow-xs divide-y divide-slate-100">
+                  <button onClick={() => { setIsGlobalVoiceSettingsOpen(true); }} className="w-full flex items-center gap-2.5 p-3 sm:p-3.5 text-right hover:bg-emerald-50/60 transition-colors group cursor-pointer">
+                    <div className="p-2 bg-gradient-to-tr from-emerald-600 via-teal-600 to-emerald-500 rounded-xl text-white shrink-0 shadow-xs">
+                      <Sparkles className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      <span className="font-black text-sm text-slate-900 block whitespace-nowrap overflow-hidden text-ellipsis">إعدادات المساعد</span>
+                      <span className="text-[11px] text-slate-500 block truncate">محرك Gemini للذكاء الاصطناعي، نطق التنبيهات، الرسالة الترحيبية وتخصيص المساعد</span>
+                    </div>
+                    <ChevronLeft className="w-4 h-4 text-emerald-500 group-hover:text-emerald-700 group-hover:-translate-x-1 transition-transform shrink-0" />
+                  </button>
+                </div>
+              </div>
+
               {/* المظهر والتخصيص */}
               <div className="space-y-1.5">
                 <h4 className="text-[11px] font-bold text-slate-500 px-1 uppercase ">المظهر والتخصيص</h4>
                 <div className="bg-white border border-slate-200 rounded-[20px] overflow-hidden shadow-sm divide-y divide-slate-100">
+                  <button onClick={() => { setIsFontSettingsModalOpen(true); }} className="w-full flex items-center gap-2 p-2.5 sm:p-3.5 sm:p-3 text-right hover:bg-slate-50 transition-colors group">
+                    <div className="p-1.5 bg-sky-600 rounded-lg text-white shrink-0">
+                      <Type className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      <span className="font-bold text-[13px] sm:text-sm text-slate-700 block whitespace-nowrap overflow-hidden text-ellipsis">إعدادات الخط والحجم والأرقام</span>
+                      <span className="text-[10.5px] text-slate-400 block truncate">ضبط حجم ونوع الخط للتبويبات، القوائم، التفاصيل، التقارير، والمدخلات مع قبول كافة صيغ الأرقام</span>
+                    </div>
+                    <ChevronLeft className="w-4 h-4 text-slate-300 group-hover:text-slate-400 group-hover:-translate-x-1 transition-transform shrink-0" />
+                  </button>
                   <button onClick={() => { setIsUiCustomizationModalOpen(true); }} className="w-full flex items-center gap-2 p-2.5 sm:p-3.5 sm:p-3 text-right hover:bg-slate-50 transition-colors group">
                     <div className="p-1.5 bg-blue-500 rounded-lg text-white shrink-0">
                       <LayoutDashboard className="w-4 h-4 sm:w-5 sm:h-5" />
                     </div>
                     <span className="font-bold text-[13px] sm:text-sm text-slate-700 flex-1 whitespace-nowrap overflow-hidden text-ellipsis">تخصيص الواجهة</span>
+                    <ChevronLeft className="w-4 h-4 text-slate-300 group-hover:text-slate-400 group-hover:-translate-x-1 transition-transform shrink-0" />
+                  </button>
+                  <button onClick={() => { setIsTaskInterfaceSettingsModalOpen(true); }} className="w-full flex items-center gap-2 p-2.5 sm:p-3.5 sm:p-3 text-right hover:bg-slate-50 transition-colors group">
+                    <div className="p-1.5 bg-amber-500 rounded-lg text-white shrink-0">
+                      <Zap className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      <span className="font-bold text-[13px] sm:text-sm text-slate-700 block whitespace-nowrap overflow-hidden text-ellipsis">إعدادات الواجهة الفلاشية ونطاق المهام</span>
+                      <span className="text-[10.5px] text-slate-400 block truncate">عرض المهام لليوم القادم، اليومين، 3، 4 أيام، أسبوع، أو شهر</span>
+                    </div>
                     <ChevronLeft className="w-4 h-4 text-slate-300 group-hover:text-slate-400 group-hover:-translate-x-1 transition-transform shrink-0" />
                   </button>
                   <button onClick={() => { setIsTaskInterfaceSettingsModalOpen(true); }} className="w-full flex items-center gap-2 p-2.5 sm:p-3.5 sm:p-3 text-right hover:bg-slate-50 transition-colors group">
@@ -21297,6 +23019,16 @@ export default function App() {
                     </div>
                     <span className="font-bold text-[13px] sm:text-sm text-slate-700 flex-1 whitespace-nowrap overflow-hidden text-ellipsis">تخصيص الشعار والاسم</span>
                     <ChevronLeft className="w-4 h-4 text-slate-300 group-hover:text-slate-400 group-hover:-translate-x-1 transition-transform shrink-0" />
+                  </button>
+                  <button onClick={() => { openExportSettingsModal(); }} className="w-full flex items-center gap-2 p-2.5 sm:p-3.5 sm:p-3 text-right hover:bg-indigo-50/60 transition-colors group">
+                    <div className="p-1.5 bg-indigo-600 rounded-lg text-white shrink-0 shadow-2xs">
+                      <Sliders className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      <span className="font-bold text-[13px] sm:text-sm text-indigo-900 block whitespace-nowrap overflow-hidden text-ellipsis">إعدادات تنسيق وتصميم المخرجات</span>
+                      <span className="text-[10.5px] text-indigo-600/80 block truncate">تنسيق وتصاميم البطاقات والحسابات والتقارير والمخزن والعملاء والتبويبات</span>
+                    </div>
+                    <ChevronLeft className="w-4 h-4 text-indigo-400 group-hover:text-indigo-600 group-hover:-translate-x-1 transition-transform shrink-0" />
                   </button>
                 </div>
               </div>
@@ -21345,11 +23077,11 @@ export default function App() {
                     </button>
                   )}
                   <button onClick={() => openBackupModal('export')} className="w-full flex items-center gap-2 p-2.5 sm:p-3.5 sm:p-3 text-right hover:bg-slate-50 transition-colors group cursor-pointer">
-                    <div className="p-1.5 bg-blue-600 rounded-lg text-white shrink-0 shadow-xs">
-                      <Database className="w-4 h-4 sm:w-5 sm:h-5" />
+                    <div className="p-1.5 bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 rounded-lg shrink-0 shadow-xs border border-emerald-500/30">
+                      <Database className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <span className="font-bold text-[13px] sm:text-sm text-slate-800 block truncate">إدارة النسخ الاحتياطي والاستعادة</span>
+                      <span className="font-bold text-[13px] sm:text-sm text-slate-900 dark:text-slate-100 block truncate">إدارة النسخ الاحتياطي والاستعادة</span>
                       <span className="text-[10px] text-slate-500 block truncate">خيارات التصدير، واستعادة البيانات محلياً أو سحابياً من جوجل درايف</span>
                     </div>
                     <ChevronLeft className="w-4 h-4 text-slate-300 group-hover:text-slate-400 group-hover:-translate-x-1 transition-transform shrink-0" />
@@ -21388,6 +23120,16 @@ export default function App() {
                     </div>
                     <span className="font-bold text-[13px] sm:text-sm text-slate-700 flex-1 whitespace-nowrap overflow-hidden text-ellipsis">حول التطبيق</span>
                     <ChevronLeft className="w-4 h-4 text-slate-300 group-hover:text-slate-400 group-hover:-translate-x-1 transition-transform shrink-0" />
+                  </button>
+                  <button onClick={() => { setIsExitConfirmModalOpen(true); }} className="w-full flex items-center gap-2 p-2.5 sm:p-3.5 sm:p-3 text-right hover:bg-rose-50 hover:text-rose-700 transition-colors group bg-rose-50/30">
+                    <div className="p-1.5 bg-rose-600 rounded-lg text-white shrink-0 group-hover:bg-rose-700 transition-colors">
+                      <LogOut className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      <span className="font-bold text-[13px] sm:text-sm text-rose-700 block whitespace-nowrap overflow-hidden text-ellipsis">خروج من التطبيق</span>
+                      <span className="text-[10px] text-rose-500 block truncate">إغلاق الجلسة الحالية وإغلاق التطبيق بأمان</span>
+                    </div>
+                    <ChevronLeft className="w-4 h-4 text-rose-300 group-hover:text-rose-500 group-hover:-translate-x-1 transition-transform shrink-0" />
                   </button>
                 </div>
               </div>
@@ -21717,8 +23459,104 @@ export default function App() {
               </Button>
             </div>
           </div>
+
+          {/* إعدادات الواجهة الفلاشية ونطاق عرض المهام */}
+          <div className="space-y-3.5 bg-amber-50/70 dark:bg-slate-800/80 p-3.5 sm:p-4 rounded-2xl border border-amber-200/90 dark:border-amber-500/30 shadow-xs">
+            <div className="flex items-center justify-between border-b border-amber-200/70 dark:border-amber-500/30 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-500 rounded-xl text-white shadow-xs">
+                  <Zap className="w-4 h-4 sm:w-5 sm:h-5" />
+                </div>
+                <div>
+                  <h4 className="font-black text-xs sm:text-sm text-slate-800 dark:text-white">إعدادات الواجهة الفلاشية (شريط المهام السريع)</h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">التحكم في ظهور الشريط وتحديد نطاق المهام المجدولة للعرض التلقائي</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHideMainCards(!hideMainCards)}
+                className={cn(
+                  "px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs active:scale-95",
+                  hideMainCards 
+                    ? "bg-amber-600 hover:bg-amber-700 text-white border border-amber-500" 
+                    : "bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50"
+                )}
+              >
+                {hideMainCards ? 'الشريط مفعّل' : 'تفعيل الشريط'}
+              </button>
+            </div>
+
+            {/* خيارات نطاق عرض المهام */}
+            <div className="space-y-2">
+              <label className="text-xs font-black text-slate-800 dark:text-slate-200 flex items-center justify-between">
+                <span>تغيير نطاق عرض المهام المجدولة:</span>
+                <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5 rounded-md">
+                  {flashTaskRange === '1day' ? 'اليوم القادم (24 ساعة)' :
+                   flashTaskRange === '2days' ? 'اليومين (48 ساعة)' :
+                   flashTaskRange === '3days' ? 'الثلاثة أيام (72 ساعة)' :
+                   flashTaskRange === '4days' ? 'الأربعة أيام (96 ساعة)' :
+                   flashTaskRange === '1week' ? 'الأسبوع (7 أيام)' :
+                   flashTaskRange === '1month' ? 'الشهر (30 يوماً)' : 'اليومين (افتراضي)'}
+                </span>
+              </label>
+              <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
+                حدد الفترة الزمنية لحصر وجلب المهام المجدولة لعرضها تلقائياً بالواجهة الفلاشية:
+              </p>
+              
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
+                {[
+                  { id: '1day', label: 'اليوم القادم', sub: 'خلال 24 ساعة' },
+                  { id: '2days', label: 'اليومين', sub: 'خلال 48 ساعة' },
+                  { id: '3days', label: 'الثلاثة أيام', sub: 'خلال 72 ساعة' },
+                  { id: '4days', label: 'الأربعة أيام', sub: 'خلال 96 ساعة' },
+                  { id: '1week', label: 'الأسبوع', sub: 'خلال 7 أيام' },
+                  { id: '1month', label: 'الشهر', sub: 'خلال 30 يوماً' }
+                ].map((item) => {
+                  const currentRange = flashTaskRange || '2days';
+                  const isSelected = currentRange === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setFlashTaskRange(item.id);
+                        try {
+                          const saved = JSON.parse(localStorage.getItem('flashTickerSettings') || '{}');
+                          saved.taskRange = item.id;
+                          localStorage.setItem('flashTickerSettings', JSON.stringify(saved));
+                        } catch (e) {}
+                        window.dispatchEvent(new CustomEvent('set-flash-task-range', { detail: { taskRange: item.id } }));
+                      }}
+                      className={cn(
+                        "p-2.5 rounded-xl border flex flex-col items-center justify-center text-center transition-all cursor-pointer active:scale-95",
+                        isSelected
+                          ? "bg-amber-500 text-white border-amber-600 shadow-sm font-black ring-2 ring-amber-300 dark:ring-amber-500"
+                          : "bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600 font-bold"
+                      )}
+                    >
+                      <div className="flex items-center justify-center gap-1 w-full">
+                        <span className="text-xs font-black">{item.label}</span>
+                        {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                      </div>
+                      <span className={cn("text-[10px] mt-0.5 font-medium", isSelected ? "text-amber-100" : "text-slate-500 dark:text-slate-400")}>
+                        {item.sub}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
         </div>
       </Modal>
+
+      {/* Font Settings Modal */}
+      <FontSettingsModal
+        isOpen={isFontSettingsModalOpen}
+        onClose={() => setIsFontSettingsModalOpen(false)}
+        uiSettings={uiSettings}
+        updateUiSettings={updateUiSettings}
+      />
 
       {/* UI Customization Modal */}
       <Modal 
@@ -22068,13 +23906,13 @@ export default function App() {
               {Object.entries(uiSettings.deviceTypeIcons || DEFAULT_DEVICE_TYPE_ICONS).map(([deviceTypeKey, currentIconName]) => {
                 const ActiveIconComp = DEVICE_ICON_COMPONENTS[currentIconName] || Smartphone;
                 return (
-                  <div key={deviceTypeKey} className="bg-slate-800/90 border border-slate-700/80 p-2.5 rounded-xl flex flex-col gap-2 shadow-xs">
+                  <div key={deviceTypeKey} className="bg-slate-50 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 p-2.5 rounded-xl flex flex-col gap-2 shadow-xs">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-400/30 flex-shrink-0 flex items-center justify-center text-indigo-300">
+                        <div className="w-8 h-8 rounded-lg bg-indigo-500/15 border border-indigo-400/30 flex-shrink-0 flex items-center justify-center text-indigo-600 dark:text-indigo-300">
                           <ActiveIconComp className="w-4 h-4" />
                         </div>
-                        <span className="text-xs font-black text-slate-100 truncate">{deviceTypeKey}</span>
+                        <span className="text-xs font-black text-slate-900 dark:text-slate-100 truncate">{deviceTypeKey}</span>
                       </div>
                       <button
                         type="button"
@@ -22085,14 +23923,14 @@ export default function App() {
                             updateUiSettings({ ...uiSettings, deviceTypeIcons: currentMap });
                           }
                         }}
-                        className="text-slate-400 hover:text-red-400 p-1 transition-colors flex-shrink-0"
+                        className="text-slate-400 hover:text-red-500 p-1 transition-colors flex-shrink-0"
                         title="حذف هذا الجهاز"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
 
-                    <div className="flex flex-wrap gap-1 bg-slate-900/80 p-1.5 rounded-lg border border-slate-800/80">
+                    <div className="flex flex-wrap gap-1 bg-white dark:bg-slate-900/80 p-1.5 rounded-lg border border-slate-200 dark:border-slate-800/80">
                       {AVAILABLE_DEVICE_ICONS.map((iconItem) => {
                         const IconChoice = iconItem.icon;
                         const isSelected = currentIconName === iconItem.name;
@@ -22110,7 +23948,7 @@ export default function App() {
                               "p-1.5 rounded-md transition-all flex items-center justify-center",
                               isSelected 
                                 ? "bg-indigo-600 text-white shadow-sm ring-1 ring-indigo-400 font-bold scale-105" 
-                                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                                : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
                             )}
                           >
                             <IconChoice className="w-4 h-4" />
@@ -22269,6 +24107,67 @@ export default function App() {
                 placeholder="ملاحظات وتنبيهات سريعة"
                 className="w-full p-3.5 sm:p-3 sm:p-2.5 text-sm sm:text-xs bg-white border border-amber-200 rounded-xl outline-none font-bold text-amber-900"
               />
+            </div>
+          </div>
+
+          {/* تخصيص موقع وظهور أيقونة المساعد الرئيسي والأيقونة العائمة */}
+          <div className="space-y-3 bg-gradient-to-br from-indigo-50/80 via-purple-50/60 to-white p-3 sm:p-4 rounded-2xl border border-indigo-200/80 shadow-xs">
+            <div className="flex items-center justify-between border-b border-indigo-200/60 pb-2.5">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-indigo-600" />
+                <h4 className="font-black text-sm text-indigo-950">إعدادات موقع وظهور أيقونة المساعد والأدوات</h4>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={uiSettings.assistantIconEnabled !== false}
+                  onChange={(e) => updateUiSettings({ ...uiSettings, assistantIconEnabled: e.target.checked })}
+                  className="w-4 h-4 text-indigo-600 rounded border-indigo-300 focus:ring-indigo-500"
+                />
+                <span className="text-xs font-black text-indigo-900">تفعيل المساعد في التطبيق</span>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div>
+                <label className="text-sm sm:text-[11px] font-bold text-slate-700 block mb-1">مكان ظهور المساعد والأدوات داخل التطبيق:</label>
+                <select
+                  value={uiSettings.assistantPosition || 'bottom-right'}
+                  onChange={(e) => updateUiSettings({ ...uiSettings, assistantPosition: e.target.value as any })}
+                  className="w-full p-3.5 sm:p-2.5 text-sm sm:text-xs bg-white border border-indigo-200 rounded-xl outline-none font-bold text-indigo-950 focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="bottom-right">طرف أسفل الشاشة الأيمن (الافتراضي)</option>
+                  <option value="bottom-left">طرف أسفل الشاشة الأيسر</option>
+                  <option value="top-right">أعلى الشاشة جهة اليمين</option>
+                  <option value="top-left">أعلى الشاشة جهة اليسار</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm sm:text-[11px] font-bold text-slate-700 block mb-1">مكان الأيقونة العائمة عند الخروج (الشاشة العائمة):</label>
+                <select
+                  value={uiSettings.floatingExitAssistantPosition || 'bottom-right'}
+                  onChange={(e) => updateUiSettings({ ...uiSettings, floatingExitAssistantPosition: e.target.value as any })}
+                  className="w-full p-3.5 sm:p-2.5 text-sm sm:text-xs bg-white border border-indigo-200 rounded-xl outline-none font-bold text-indigo-950 focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="bottom-right">طرف أسفل الشاشة الأيمن</option>
+                  <option value="bottom-left">طرف أسفل الشاشة الأيسر</option>
+                  <option value="top-right">أعلى الشاشة جهة اليمين</option>
+                  <option value="top-left">أعلى الشاشة جهة اليسار</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-between border-t border-indigo-100">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={uiSettings.floatingExitAssistantEnabled !== false}
+                  onChange={(e) => updateUiSettings({ ...uiSettings, floatingExitAssistantEnabled: e.target.checked })}
+                  className="w-4 h-4 text-purple-600 rounded border-purple-300 focus:ring-purple-500"
+                />
+                <span className="text-xs font-bold text-slate-800">إظهار الأيقونة العائمة على شاشة الهاتف عند الخروج للرئيسية</span>
+              </label>
             </div>
           </div>
 
@@ -22886,6 +24785,269 @@ export default function App() {
                     <option value="border">بسيط (افتراضي)</option>
                     <option value="border-2">سميك (2px)</option>
                   </select>
+                </div>
+              </div>
+            </div>
+
+            {/* 🔤 إعدادات الخطوط والأحجام ونمط الأرقام عبر كل عناصر التطبيق */}
+            <div className="space-y-4 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white p-3.5 sm:p-5 rounded-2xl border border-indigo-500/40 shadow-xl dir-rtl">
+              <div className="flex items-center justify-between border-b border-indigo-800/80 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-indigo-500/20 rounded-xl border border-indigo-400/30 text-indigo-300">
+                    <Type className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-black text-sm text-indigo-100">إعدادات الخطوط وأحجام النصوص والأرقام الشاملة</h4>
+                    <p className="text-[11px] text-indigo-300">التحكم الدقيق في نوع وحجم الخط للتبويبات، التفاصيل، التقارير، المدخلات والأرقام</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 1. الخط العام للتطبيق والحجم الكلي */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-800/80 p-3 rounded-xl border border-indigo-900/80">
+                <div className="space-y-1">
+                  <label className="text-xs font-black text-indigo-200 block">نوع الخط الرئيسي للتطبيق بالكامل:</label>
+                  <select
+                    value={uiSettings.appFontFamily || ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      let fontImport = '';
+                      if (val.includes('Cairo')) fontImport = 'https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap';
+                      else if (val.includes('Tajawal')) fontImport = 'https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap';
+                      else if (val.includes('Reem Kufi')) fontImport = 'https://fonts.googleapis.com/css2?family=Reem+Kufi:wght@400;600;700&display=swap';
+                      else if (val.includes('Changa')) fontImport = 'https://fonts.googleapis.com/css2?family=Changa:wght@400;600;700;800&display=swap';
+                      else if (val.includes('Amiri')) fontImport = 'https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&display=swap';
+                      else if (val.includes('Alexandria')) fontImport = 'https://fonts.googleapis.com/css2?family=Alexandria:wght@400;600;700;800&display=swap';
+                      else if (val.includes('Almarai')) fontImport = 'https://fonts.googleapis.com/css2?family=Almarai:wght@400;700;800&display=swap';
+                      else if (val.includes('IBM Plex')) fontImport = 'https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;600;700&display=swap';
+
+                      updateUiSettings({ ...uiSettings, appFontFamily: val, appFontImport: fontImport });
+                    }}
+                    className="w-full p-2 text-xs bg-slate-900 border border-indigo-700/80 rounded-xl outline-none font-bold text-white"
+                  >
+                    <option value="">خط النظام الافتراضي (Tajawal)</option>
+                    <option value='"Cairo", sans-serif'>Cairo - كـايـرو عريض ومميز</option>
+                    <option value='"Tajawal", sans-serif'>Tajawal - تـجـوال أصلي مريح</option>
+                    <option value='"Reem Kufi", sans-serif'>Reem Kufi - كـوفـي فـاخـر</option>
+                    <option value='"Changa", sans-serif'>Changa - تـشـانـغـا مـودرن</option>
+                    <option value='"Amiri", serif'>Amiri - أـمـيـري كـلاسـيـك</option>
+                    <option value='"Alexandria", sans-serif'>Alexandria - إكـسـنـدريـا عـصـري</option>
+                    <option value='"Almarai", sans-serif'>Almarai - الـمـراعـي واضـح</option>
+                    <option value='"IBM Plex Sans Arabic", sans-serif'>IBM Plex Sans Arabic - آي بي إم الملوكي</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-black text-indigo-200 block">مقياس التكبير العام للتطبيق (Zoom Scale):</label>
+                  <select
+                    value={uiSettings.globalFontSizeScale || '1.0'}
+                    onChange={(e) => updateUiSettings({ ...uiSettings, globalFontSizeScale: e.target.value })}
+                    className="w-full p-2 text-xs bg-slate-900 border border-indigo-700/80 rounded-xl outline-none font-bold text-white"
+                  >
+                    <option value="0.85">85% - صغير ومدمج</option>
+                    <option value="1.0">100% - الحجم الطبيعي (الافتراضي)</option>
+                    <option value="1.15">115% - كبير ومقروء</option>
+                    <option value="1.30">130% - ضخم لكبار السن</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* 2. التبويبات الرئيسية والقوائم */}
+              <div className="space-y-2 bg-slate-800/80 p-3 rounded-xl border border-indigo-900/80">
+                <h5 className="text-xs font-black text-indigo-300 border-b border-indigo-800/60 pb-1">📌 1. التبويبات الرئيسية وشريط التنقل:</h5>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-indigo-200 block">نوع الخط:</label>
+                    <select
+                      value={uiSettings.mainTabsFontFamily || ''}
+                      onChange={(e) => updateUiSettings({ ...uiSettings, mainTabsFontFamily: e.target.value })}
+                      className="w-full p-2 text-xs bg-slate-900 border border-indigo-700/80 rounded-xl font-bold text-white"
+                    >
+                      <option value="">مثل خط التطبيق العام</option>
+                      <option value='"Cairo", sans-serif'>Cairo - القاهرة</option>
+                      <option value='"Tajawal", sans-serif'>Tajawal - تجوال</option>
+                      <option value='"Reem Kufi", sans-serif'>Reem Kufi - كوفي</option>
+                      <option value='"Changa", sans-serif'>Changa - تشانغا</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-indigo-200 block">حجم خط التبويبات:</label>
+                    <select
+                      value={uiSettings.mainTabsFontSize || '13px'}
+                      onChange={(e) => updateUiSettings({ ...uiSettings, mainTabsFontSize: e.target.value })}
+                      className="w-full p-2 text-xs bg-slate-900 border border-indigo-700/80 rounded-xl font-bold text-white"
+                    >
+                      <option value="11px">11px - صغير جداً</option>
+                      <option value="12px">12px - صغير</option>
+                      <option value="13px">13px - متوسط (افتراضي)</option>
+                      <option value="15px">15px - كبير</option>
+                      <option value="17px">17px - ضخم</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-indigo-200 block">سمك خط التبويبات:</label>
+                    <select
+                      value={uiSettings.mainTabsFontWeight || 'font-bold'}
+                      onChange={(e) => updateUiSettings({ ...uiSettings, mainTabsFontWeight: e.target.value })}
+                      className="w-full p-2 text-xs bg-slate-900 border border-indigo-700/80 rounded-xl font-bold text-white"
+                    >
+                      <option value="font-normal">عادي (Normal)</option>
+                      <option value="font-bold">عريض (Bold - افتراضي)</option>
+                      <option value="font-black">عريض جداً (Extra Black)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. التفاصيل والقوائم والبطاقات */}
+              <div className="space-y-2 bg-slate-800/80 p-3 rounded-xl border border-indigo-900/80">
+                <h5 className="text-xs font-black text-indigo-300 border-b border-indigo-800/60 pb-1">📋 2. التفاصيل، البطاقات والقوائم:</h5>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-indigo-200 block">نوع الخط:</label>
+                    <select
+                      value={uiSettings.detailsFontFamily || ''}
+                      onChange={(e) => updateUiSettings({ ...uiSettings, detailsFontFamily: e.target.value })}
+                      className="w-full p-2 text-xs bg-slate-900 border border-indigo-700/80 rounded-xl font-bold text-white"
+                    >
+                      <option value="">مثل خط التطبيق العام</option>
+                      <option value='"Cairo", sans-serif'>Cairo - القاهرة</option>
+                      <option value='"Tajawal", sans-serif'>Tajawal - تجوال</option>
+                      <option value='"Almarai", sans-serif'>Almarai - المراعي</option>
+                      <option value='"Alexandria", sans-serif'>Alexandria - الإسكندرية</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-indigo-200 block">حجم خط التفاصيل والقوائم:</label>
+                    <select
+                      value={uiSettings.detailsFontSize || '12px'}
+                      onChange={(e) => updateUiSettings({ ...uiSettings, detailsFontSize: e.target.value })}
+                      className="w-full p-2 text-xs bg-slate-900 border border-indigo-700/80 rounded-xl font-bold text-white"
+                    >
+                      <option value="10px">10px - صغير مدمج</option>
+                      <option value="12px">12px - متوسط (افتراضي)</option>
+                      <option value="14px">14px - كبير ومقروء</option>
+                      <option value="16px">16px - ضخم جداً</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. التقارير والكشوفات الرسمية */}
+              <div className="space-y-2 bg-slate-800/80 p-3 rounded-xl border border-indigo-900/80">
+                <h5 className="text-xs font-black text-indigo-300 border-b border-indigo-800/60 pb-1">📄 3. التقارير والكشوفات الرسمية:</h5>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-indigo-200 block">نوع الخط:</label>
+                    <select
+                      value={uiSettings.reportsFontFamily || ''}
+                      onChange={(e) => updateUiSettings({ ...uiSettings, reportsFontFamily: e.target.value })}
+                      className="w-full p-2 text-xs bg-slate-900 border border-indigo-700/80 rounded-xl font-bold text-white"
+                    >
+                      <option value="">مثل خط التطبيق العام</option>
+                      <option value='"Cairo", sans-serif'>Cairo - القاهرة</option>
+                      <option value='"Tajawal", sans-serif'>Tajawal - تجوال</option>
+                      <option value='"Amiri", serif'>Amiri - أميري رسمية</option>
+                      <option value='"Almarai", sans-serif'>Almarai - المراعي</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-indigo-200 block">حجم خط نصوص التقارير:</label>
+                    <select
+                      value={uiSettings.reportsFontSize || '11px'}
+                      onChange={(e) => updateUiSettings({ ...uiSettings, reportsFontSize: e.target.value })}
+                      className="w-full p-2 text-xs bg-slate-900 border border-indigo-700/80 rounded-xl font-bold text-white"
+                    >
+                      <option value="9px">9px - مدمج جداً</option>
+                      <option value="11px">11px - قياسي (افتراضي)</option>
+                      <option value="13px">13px - كبير واضعي</option>
+                      <option value="15px">15px - ضخم للمستندات</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* 5. النصوص المدخلة يدوياً بالحقول */}
+              <div className="space-y-2 bg-slate-800/80 p-3 rounded-xl border border-indigo-900/80">
+                <h5 className="text-xs font-black text-indigo-300 border-b border-indigo-800/60 pb-1">✏️ 4. النصوص المدخلة يدوياً والمربعات:</h5>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-indigo-200 block">نوع الخط لخانة الكتابة والوصف:</label>
+                    <select
+                      value={uiSettings.inputsFontFamily || ''}
+                      onChange={(e) => updateUiSettings({ ...uiSettings, inputsFontFamily: e.target.value })}
+                      className="w-full p-2 text-xs bg-slate-900 border border-indigo-700/80 rounded-xl font-bold text-white"
+                    >
+                      <option value="">مثل خط التطبيق العام</option>
+                      <option value='"Cairo", sans-serif'>Cairo - القاهرة</option>
+                      <option value='"Tajawal", sans-serif'>Tajawal - تجوال</option>
+                      <option value='ui-monospace, SFMono-Regular, monospace'>Monospace - مونو برمجي</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-indigo-200 block">حجم خط نصوص المربعات والمدخلات:</label>
+                    <select
+                      value={uiSettings.inputsFontSize || '13px'}
+                      onChange={(e) => updateUiSettings({ ...uiSettings, inputsFontSize: e.target.value })}
+                      className="w-full p-2 text-xs bg-slate-900 border border-indigo-700/80 rounded-xl font-bold text-white"
+                    >
+                      <option value="11px">11px - صغير</option>
+                      <option value="13px">13px - متوسط (افتراضي)</option>
+                      <option value="15px">15px - كبير</option>
+                      <option value="17px">17px - ضخم لكتابة الملاحظات</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* 6. الأرقام والمبالغ والتكاليف والحسابات */}
+              <div className="space-y-2 bg-slate-800/80 p-3 rounded-xl border border-indigo-900/80">
+                <h5 className="text-xs font-black text-amber-300 border-b border-indigo-800/60 pb-1">🔢 5. الأرقام والمبالغ والتكاليف والحسابات (معالجة الأرقام بالعربي والإنجليزي):</h5>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-indigo-200 block">خط الأرقام والمبالغ:</label>
+                    <select
+                      value={uiSettings.numbersFontFamily || 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'}
+                      onChange={(e) => updateUiSettings({ ...uiSettings, numbersFontFamily: e.target.value })}
+                      className="w-full p-2 text-xs bg-slate-900 border border-indigo-700/80 rounded-xl font-bold text-white"
+                    >
+                      <option value="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace">Monospace / Fira Code - خط الأرقام المالي الدقيق (افتراضي)</option>
+                      <option value='"Cairo", sans-serif'>Cairo - خط القاهرة البارز للأرقام</option>
+                      <option value='"Tajawal", sans-serif'>Tajawal - تجوال عادي</option>
+                      <option value='"Reem Kufi", sans-serif'>Reem Kufi - كوفي للأرقام</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-indigo-200 block">حجم خط الأرقام والمبالغ:</label>
+                    <select
+                      value={uiSettings.numbersFontSize || '14px'}
+                      onChange={(e) => updateUiSettings({ ...uiSettings, numbersFontSize: e.target.value })}
+                      className="w-full p-2 text-xs bg-slate-900 border border-indigo-700/80 rounded-xl font-bold text-white"
+                    >
+                      <option value="11px">11px - صغير</option>
+                      <option value="13px">13px - قياسي</option>
+                      <option value="14px">14px - متوسط (افتراضي)</option>
+                      <option value="16px">16px - كبير وبارز</option>
+                      <option value="19px">19px - ضخم جداً للمبالغ</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-indigo-200 block">بروز وسمك الأرقام:</label>
+                    <select
+                      value={uiSettings.numbersWeight || 'font-bold'}
+                      onChange={(e) => updateUiSettings({ ...uiSettings, numbersWeight: e.target.value })}
+                      className="w-full p-2 text-xs bg-slate-900 border border-indigo-700/80 rounded-xl font-bold text-white"
+                    >
+                      <option value="font-normal">عادي (Normal)</option>
+                      <option value="font-bold">عريض (Bold - افتراضي)</option>
+                      <option value="font-black">عريض جداً وبصمة مالية (Extra Black)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="mt-2 p-2 bg-emerald-950/60 border border-emerald-500/40 rounded-lg text-[10.5px] font-bold text-emerald-200 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>ميزة التحويل التلقائي للأرقام مفعّلة: تقبل الكيبورد بالعربي (١٢٣٤) والإنجليزي (1234) وتتحول فورياً لرقم محاسبي موحد في كل التطبيق.</span>
                 </div>
               </div>
             </div>
@@ -24304,6 +26466,32 @@ export default function App() {
         fullScreenOnMobile={true}
       >
         <div className="space-y-4 p-1">
+          {/* شريط الفحص السريع والتشخيص لسلامة قواعد البيانات */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 p-3 bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 rounded-2xl border border-emerald-200 shadow-3xs">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-emerald-600 text-white rounded-xl shadow-xs">
+                <ShieldCheck className="w-5 h-5 stroke-[2.5]" />
+              </div>
+              <div>
+                <span className="text-xs font-black text-emerald-950 block">حالة التخزين وقواعد البيانات المحلية</span>
+                <span className="text-[11px] text-emerald-800 font-bold">16 جدولاً مفهرساً ونشطاً بالكامل ومتوافقاً مع النسخ الاحتياطي</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                hapticLight();
+                setIsDataHealthModalOpen(true);
+              }}
+              className="w-full sm:w-auto py-2 px-3.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
+              title="فحص فوري وتدقيق سلامة وتكامل 16 جدولاً وقاعدة بيانات"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>فحص سلامة البيانات وقواعد البيانات 🩺</span>
+            </button>
+          </div>
+
           {/* Top 2-Way Tab Switcher */}
           <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-2xl border border-slate-200">
             <button
@@ -24326,11 +26514,16 @@ export default function App() {
               className={cn(
                 "py-2.5 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer",
                 backupModalTab === 'export' 
-                  ? "bg-amber-600 text-white shadow-md" 
-                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
+                  ? "bg-emerald-600 text-white shadow-md" 
+                  : "text-slate-700 hover:text-slate-900 hover:bg-slate-200/60"
               )}
             >
-              <Database className="w-4 h-4 shrink-0" />
+              <div className={cn(
+                "p-1 rounded-md shrink-0 flex items-center justify-center",
+                backupModalTab === 'export' ? "bg-white/20 text-white" : "bg-emerald-500/20 text-emerald-700 border border-emerald-500/30"
+              )}>
+                <Database className="w-4 h-4 stroke-[2.5]" />
+              </div>
               <span className="truncate">تصدير وحفظ</span>
             </button>
           </div>
@@ -24422,6 +26615,7 @@ export default function App() {
                         customers: !allSelected,
                         inventory: !allSelected,
                         transactions: !allSelected,
+                        accounts: !allSelected,
                         settings: !allSelected,
                         dropdowns: !allSelected,
                         users: !allSelected,
@@ -24438,11 +26632,12 @@ export default function App() {
                     { key: 'tasks', label: 'المهام' },
                     { key: 'customers', label: 'العملاء' },
                     { key: 'inventory', label: 'المخزون' },
-                    { key: 'transactions', label: 'المعاملات' },
-                    { key: 'settings', label: 'الإعدادات' },
+                    { key: 'transactions', label: 'المعاملات المالية' },
+                    { key: 'accounts', label: 'الحسابات المستقلة والديون والمركز المالي' },
+                    { key: 'settings', label: 'الإعدادات الشاملة للتطبيق والواجهات (الفلاشية/المساعد)' },
                     { key: 'dropdowns', label: 'خيارات القوائم' },
                     { key: 'users', label: 'المستخدمين وكلمات المرور والتصاريح' },
-                    { key: 'notesAndTools', label: 'الملاحظات والأدوات' }
+                    { key: 'notesAndTools', label: 'الملاحظات والأدوات والتنبيهات' }
                   ].map(({ key, label }) => (
                     <label key={key} className="flex items-center gap-2 p-2 bg-white border border-slate-100 rounded-xl cursor-pointer hover:bg-slate-50 transition-colors">
                       <input 
@@ -24474,6 +26669,7 @@ export default function App() {
                         customers: !allSelected,
                         inventory: !allSelected,
                         transactions: !allSelected,
+                        accounts: !allSelected,
                         settings: !allSelected,
                         dropdowns: !allSelected,
                         media: !allSelected,
@@ -24491,12 +26687,13 @@ export default function App() {
                     { key: 'tasks', label: 'المهام' },
                     { key: 'customers', label: 'العملاء' },
                     { key: 'inventory', label: 'المخزون' },
-                    { key: 'transactions', label: 'المعاملات' },
-                    { key: 'settings', label: 'الإعدادات' },
+                    { key: 'transactions', label: 'المعاملات المالية' },
+                    { key: 'accounts', label: 'الحسابات المستقلة والديون والمركز المالي' },
+                    { key: 'settings', label: 'الإعدادات الشاملة للتطبيق والواجهات (الفلاشية/المساعد)' },
                     { key: 'dropdowns', label: 'خيارات القوائم' },
                     { key: 'media', label: 'تضمين الوسائط والملفات (الصور)' },
                     { key: 'users', label: 'المستخدمين وكلمات المرور والتصاريح' },
-                    { key: 'notesAndTools', label: 'الملاحظات والأدوات' }
+                    { key: 'notesAndTools', label: 'الملاحظات والأدوات والتنبيهات' }
                   ].map(({ key, label }) => (
                     <label key={key} className="flex items-center gap-2 p-2 bg-white border border-slate-100 rounded-xl cursor-pointer hover:bg-slate-50 transition-colors">
                       <input 
@@ -24511,14 +26708,14 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="p-4 bg-orange-50 border border-orange-100 rounded-2xl space-y-3">
+              <div className="p-4 bg-emerald-50/70 border border-emerald-200/80 rounded-2xl space-y-3">
                 <div className="flex items-center gap-3 mb-1">
-                  <div className="p-2 bg-orange-500 text-white rounded-lg shadow-md">
-                    <Download className="w-5 h-5" />
+                  <div className="p-2 bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 rounded-xl shadow-xs">
+                    <Database className="w-5 h-5 stroke-[2.5]" />
                   </div>
                   <div>
-                    <h4 className="font-bold text-orange-900 text-sm">خيارات التصدير الحالية</h4>
-                    <p className="text-[10px] text-orange-700">حفظ نسخة احتياطية من الأقسام المحددة</p>
+                    <h4 className="font-bold text-slate-900 text-sm">خيارات التصدير والحفظ الحالية</h4>
+                    <p className="text-[10px] text-slate-600">حفظ نسخة احتياطية من الأقسام المحددة محلياً أو سحابياً</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
@@ -24636,6 +26833,8 @@ export default function App() {
               setTaskModalKey(prev => prev + 1);
               setActiveTaskCustomerClassification('الكل');
               setShowTaskCustomerFilter(true);
+              setSelectedTaskTechnician(null);
+              setSelectedModelForOptions('ALL');
             }} 
             title={(() => {
               if (!editingId) return 'مهمة صيانة جديدة';
@@ -24676,6 +26875,14 @@ export default function App() {
               return val.replace(/\s/g, '').split('+').reduce((sum, p) => sum + (parseFloat(p) || 0), 0);
             };
 
+            const formExecutionTime = (formData.get('executionTime') as string)?.trim();
+            const taskCreatedAt = formData.get('date') ? new Date(formData.get('date') as string).toISOString() : new Date().toISOString();
+            // وقت التنفيذ التلقائي: 6 ساعات من تاريخ ووقت إنشاء المهمة إذا لم يتم تحديده يدوياً
+            const default6HoursLater = getDefaultExecutionTime(taskCreatedAt);
+            const finalExecutionTime = formExecutionTime 
+              ? (parseDateTimeLocalToISO(formExecutionTime) || default6HoursLater) 
+              : default6HoursLater;
+
             const taskData: Partial<Task> = {
               customer: formData.get('customer') as string,
               deviceType: types.filter(t => t).join(', ') || '',
@@ -24688,11 +26895,12 @@ export default function App() {
               status: (formData.get('status') as TaskStatus) || taskStatus || 'pending',
               issue: taskIssueText,
               imageUrl: imageUrlsStr,
-              executionTime: formData.get('executionTime') as string || undefined,
-              isAlarmActive: !!formData.get('executionTime'),
+              executionTime: finalExecutionTime,
+              isAlarmActive: true,
               isExecuted: false,
-              createdAt: formData.get('date') ? new Date(formData.get('date') as string).toISOString() : new Date().toISOString(),
+              createdAt: taskCreatedAt,
               modelCosts: taskModelCosts,
+              technician: (formData.get('technician') as string) || undefined,
             };
             handleTaskSubmit(taskData, (e.nativeEvent as any).submitter?.name === 'saveAndNew');
           }} className={cn(
@@ -24779,7 +26987,8 @@ export default function App() {
                       type="datetime-local"
                       name="executionTime"
                       ref={executionTimeRef}
-                      defaultValue={editingId ? tasks.find(t => t.id === editingId)?.executionTime?.slice(0, 16) : ''}
+                      defaultValue={editingId ? formatToDateTimeLocal(tasks.find(t => t.id === editingId)?.executionTime) : ''}
+                      title="اتركه فارغاً للتنفيذ التلقائي بعد 6 ساعات من الإضافة"
                       className="w-full h-6.5 sm:h-7 px-1.5 text-[10.5px] sm:text-xs bg-slate-50 border border-slate-200 rounded-md outline-none focus:ring-1 focus:ring-emerald-500 font-bold"
                     />
                   </div>
@@ -25171,7 +27380,7 @@ export default function App() {
                                           inputMode="decimal"
                                           value={costVal}
                                           onChange={(e) => {
-                                            const clean = e.target.value.replace(/[^0-9.]/g, '');
+                                            const clean = toStandardDigits(e.target.value).replace(/[^0-9.]/g, '');
                                             const updated = {
                                               ...taskModelCosts,
                                               [m.name]: clean
@@ -25260,6 +27469,19 @@ export default function App() {
                         }
                         return undefined;
                       }}
+                      topContent={
+                        syncedTaskModels.length > 0 ? (
+                          <div className="mb-2 pb-1.5 border-b border-slate-200 text-right space-y-1" dir="rtl">
+                            <span className="text-[10px] font-black text-blue-900 block px-1">تحديد الموديل المخصص للأصناف:</span>
+                            <div className="flex flex-wrap gap-1 px-1">
+                              <button type="button" onClick={() => setSelectedModelForOptions('ALL')} className={cn("px-2 py-0.5 text-[9px] font-bold rounded-md border transition-all cursor-pointer", selectedModelForOptions === 'ALL' ? "bg-blue-600 text-white border-blue-600" : "bg-slate-100 text-slate-700 border-slate-200")}>الكل</button>
+                              {syncedTaskModels.map(m => (
+                                <button key={m.name} type="button" onClick={() => setSelectedModelForOptions(m.name)} className={cn("px-2 py-0.5 text-[9px] font-bold rounded-md border transition-all cursor-pointer", selectedModelForOptions === m.name ? "bg-blue-600 text-white border-blue-600" : "bg-slate-100 text-slate-700 border-slate-200")}>{m.name}</button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : undefined
+                      }
                       onSelect={(opt) => {
                         const selected = Array.isArray(opt) ? opt : [opt];
                         setSelectedItems(selected);
@@ -25361,7 +27583,7 @@ export default function App() {
                       }}
                       defaultValue={editingId ? (tasks.find(t => t.id === editingId)?.deposit || '') : ''}
                       className={cn(
-                        "w-full h-6.5 sm:h-7 py-0.5 px-2 text-[10.5px] sm:text-xs border rounded-md outline-none focus:ring-1 focus:ring-emerald-500 font-bold pl-9 transition-colors",
+                        "w-full h-6.5 sm:h-7 py-0.5 px-2 text-[10.5px] sm:text-xs border rounded-md outline-none focus:ring-1 focus:ring-emerald-500 font-bold pl-16 transition-colors",
                         depositHistoryItems.length > 0 && !isDepositEditable 
                           ? "bg-emerald-500/10 border-emerald-300/70 text-slate-950 cursor-not-allowed" 
                           : "bg-emerald-500/10 border-emerald-300/80 cursor-pointer hover:bg-emerald-500/15 text-slate-950"
@@ -25373,31 +27595,54 @@ export default function App() {
                           : "أدخل المبلغ مباشرة أو انقر مرتين لفتح نافذة دفعات المقدم"
                       }
                     />
-                    <button 
-                      type="button" 
-                      onClick={() => {
-                        const costInput = document.querySelector('input[name="cost"]') as HTMLInputElement;
-                        if (costInput && !isNaN(parseFloat(costInput.value))) {
-                          const cost = parseFloat(costInput.value) || 0;
-                          const curr = (document.querySelector('[name="currency"]') as HTMLSelectElement)?.value || 'RY';
-                          
+                    <div className="absolute left-1 top-1/2 -translate-y-1/2 flex items-center gap-1 z-10">
+                      <VoiceInputButton
+                        isNumeric={true}
+                        target="task-deposit"
+                        title="إدخال مبلغ المقدم بالصوت (يتحول لرقم)"
+                        onResult={(numStr) => {
+                          const val = parseFloat(numStr) || 0;
+                          if (depositRef.current) depositRef.current.value = numStr;
+                          setIsDepositEditable(true);
+                          const curr = (document.querySelector('[name="currency"]') as HTMLSelectElement)?.value || systemCurrency;
                           const newItem = {
                             id: Date.now().toString(),
-                            amount: cost,
+                            amount: val,
                             currency: curr as Currency,
                             date: new Date().toISOString(),
-                            note: "كامل المبلغ"
+                            note: "إدخال صوتي"
                           };
-                          const newItems = [newItem];
-                          setDepositHistoryItems(newItems);
-                          setTaskIssueText(prev => syncPaymentsToIssueText(newItems, prev, isHassabIncluded));
-                          updateDepositRefTotal(newItems);
-                        }
-                      }}
-                      className="absolute left-1 top-1/2 -translate-y-1/2 text-[7px] px-1 py-0.5 bg-emerald-100 text-emerald-600 font-bold rounded hover:bg-emerald-200 transition-colors shadow-2xs cursor-pointer"
-                    >
-                      كامل
-                    </button>
+                          setDepositHistoryItems([newItem]);
+                          setTaskIssueText(prev => syncPaymentsToIssueText([newItem], prev, isHassabIncluded));
+                          setTaskModalKey(prev => prev + 1);
+                        }}
+                      />
+                      <button 
+                        type="button" 
+                        onClick={() => {
+                          const costInput = document.querySelector('input[name="cost"]') as HTMLInputElement;
+                          if (costInput && !isNaN(parseFloat(costInput.value))) {
+                            const cost = parseFloat(costInput.value) || 0;
+                            const curr = (document.querySelector('[name="currency"]') as HTMLSelectElement)?.value || 'RY';
+                            
+                            const newItem = {
+                              id: Date.now().toString(),
+                              amount: cost,
+                              currency: curr as Currency,
+                              date: new Date().toISOString(),
+                              note: "كامل المبلغ"
+                            };
+                            const newItems = [newItem];
+                            setDepositHistoryItems(newItems);
+                            setTaskIssueText(prev => syncPaymentsToIssueText(newItems, prev, isHassabIncluded));
+                            updateDepositRefTotal(newItems);
+                          }
+                        }}
+                        className="text-[7px] px-1 py-0.5 bg-emerald-100 text-emerald-600 font-bold rounded hover:bg-emerald-200 transition-colors shadow-2xs cursor-pointer"
+                      >
+                        كامل
+                      </button>
+                    </div>
                   </div>
                   
                   <div className="relative">
@@ -25406,10 +27651,23 @@ export default function App() {
                       inputMode="decimal"
                       name="cost" 
                       defaultValue={editingId ? tasks.find(t => t.id === editingId)?.cost : ''} 
-                      className="w-full h-6.5 sm:h-7 py-0.5 px-2 text-[10.5px] sm:text-xs bg-blue-500/10 border border-blue-300/80 rounded-md outline-none focus:ring-1 focus:ring-blue-500 font-bold text-slate-950 pl-8" 
+                      className="w-full h-6.5 sm:h-7 py-0.5 px-2 text-[10.5px] sm:text-xs bg-blue-500/10 border border-blue-300/80 rounded-md outline-none focus:ring-1 focus:ring-blue-500 font-bold text-slate-950 pl-16" 
                       placeholder="التكلفة (0.00)"
                     />
-                    <div className="absolute left-1 top-1/2 -translate-y-1/2">
+                    <div className="absolute left-1 top-1/2 -translate-y-1/2 flex items-center gap-1 z-10">
+                      <VoiceInputButton
+                        isNumeric={true}
+                        target="task-cost"
+                        title="إدخال التكلفة بالصوت (تتحول لرقم تلقائياً)"
+                        onResult={(numStr) => {
+                          const costInput = document.querySelector('input[name="cost"]') as HTMLInputElement;
+                          if (costInput) {
+                            costInput.value = numStr;
+                            costInput.dispatchEvent(new Event('input', { bubbles: true }));
+                            costInput.dispatchEvent(new Event('change', { bubbles: true }));
+                          }
+                        }}
+                      />
                       <select 
                         name="currency" 
                         value={taskFormCurrency}
@@ -25423,6 +27681,8 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+
+                {/* صف أزرار التنقل أو الإدخال السريع */}
 
                 {/* صف الحالة والمشكلة والفحص وموقع الحفظ في نفس الصف */}
                 <div className="grid grid-cols-4 gap-1 w-full items-center">
@@ -25466,9 +27726,23 @@ export default function App() {
                           forceCenter={true}
                           options={(statusOptions.length > 0 ? statusOptions : DEFAULT_TASK_STATUSES).filter(s => s !== 'تم الفحص والابلاغ' && s !== 'ملغية')}
                           showEditControls={true}
+                          topContent={
+                            syncedTaskModels.length > 0 ? (
+                              <div className="mb-2 pb-1.5 border-b border-slate-200 text-right space-y-1" dir="rtl">
+                                <span className="text-[10px] font-black text-blue-900 block px-1">تحديد الموديل المخصص للحالة:</span>
+                                <div className="flex flex-wrap gap-1 px-1">
+                                  <button type="button" onClick={() => setSelectedModelForOptions('ALL')} className={cn("px-2 py-0.5 text-[9px] font-bold rounded-md border transition-all cursor-pointer", selectedModelForOptions === 'ALL' ? "bg-blue-600 text-white border-blue-600" : "bg-slate-100 text-slate-700 border-slate-200")}>الكل</button>
+                                  {syncedTaskModels.map(m => (
+                                    <button key={m.name} type="button" onClick={() => setSelectedModelForOptions(m.name)} className={cn("px-2 py-0.5 text-[9px] font-bold rounded-md border transition-all cursor-pointer", selectedModelForOptions === m.name ? "bg-blue-600 text-white border-blue-600" : "bg-slate-100 text-slate-700 border-slate-200")}>{m.name}</button>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : undefined
+                          }
                           onSelect={(opt) => {
-                            const label = Array.isArray(opt) ? opt[opt.length - 1] : opt;
-                            const val = getStatusKeyFromLabel(label) || label;
+                            const rawLabel = Array.isArray(opt) ? opt[opt.length - 1] : opt;
+                            const label = (selectedModelForOptions && selectedModelForOptions !== 'ALL') ? `${rawLabel} (${selectedModelForOptions})` : rawLabel;
+                            const val = getStatusKeyFromLabel(rawLabel) || rawLabel;
                             let replace = false;
                             const hasThisParticularStatusBefore = taskIssueText.includes(label);
                             const hasStatusBefore = taskIssueText.includes('الحالة: ');
@@ -25501,8 +27775,22 @@ export default function App() {
                       forceCenter={true}
                       buttonClassName="w-full px-0.5 sm:px-1 py-0.5 min-h-[26px] h-6.5 text-[8.5px] sm:text-[9.5px] font-bold justify-center rounded-lg shadow-2xs min-w-0"
                       selectedValues={parseSelectedOptionsFromText(taskIssueText, 'issue')}
+                      topContent={
+                        syncedTaskModels.length > 0 ? (
+                          <div className="mb-2 pb-1.5 border-b border-slate-200 text-right space-y-1" dir="rtl">
+                            <span className="text-[10px] font-black text-blue-900 block px-1">تحديد الموديل المخصص للمشكلة:</span>
+                            <div className="flex flex-wrap gap-1 px-1">
+                              <button type="button" onClick={() => setSelectedModelForOptions('ALL')} className={cn("px-2 py-0.5 text-[9px] font-bold rounded-md border transition-all cursor-pointer", selectedModelForOptions === 'ALL' ? "bg-blue-600 text-white border-blue-600" : "bg-slate-100 text-slate-700 border-slate-200")}>الكل</button>
+                              {syncedTaskModels.map(m => (
+                                <button key={m.name} type="button" onClick={() => setSelectedModelForOptions(m.name)} className={cn("px-2 py-0.5 text-[9px] font-bold rounded-md border transition-all cursor-pointer", selectedModelForOptions === m.name ? "bg-blue-600 text-white border-blue-600" : "bg-slate-100 text-slate-700 border-slate-200")}>{m.name}</button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : undefined
+                      }
                       onSelect={(opt) => {
-                        const label = Array.isArray(opt) ? opt[opt.length - 1] : opt;
+                        const rawLabel = Array.isArray(opt) ? opt[opt.length - 1] : opt;
+                        const label = (selectedModelForOptions && selectedModelForOptions !== 'ALL') ? `${rawLabel} (${selectedModelForOptions})` : rawLabel;
                         let replace = false;
                         const hasThisParticularBefore = taskIssueText.includes(label);
                         const hasBefore = taskIssueText.includes('المشكلة: ');
@@ -25528,8 +27816,22 @@ export default function App() {
                       forceCenter={true}
                       buttonClassName="w-full px-0.5 sm:px-1 py-0.5 min-h-[26px] h-6.5 text-[8.5px] sm:text-[9.5px] font-bold justify-center rounded-lg shadow-2xs min-w-0"
                       selectedValues={parseSelectedOptionsFromText(taskIssueText, 'inspection')}
+                      topContent={
+                        syncedTaskModels.length > 0 ? (
+                          <div className="mb-2 pb-1.5 border-b border-slate-200 text-right space-y-1" dir="rtl">
+                            <span className="text-[10px] font-black text-blue-900 block px-1">تحديد الموديل المخصص للفحص:</span>
+                            <div className="flex flex-wrap gap-1 px-1">
+                              <button type="button" onClick={() => setSelectedModelForOptions('ALL')} className={cn("px-2 py-0.5 text-[9px] font-bold rounded-md border transition-all cursor-pointer", selectedModelForOptions === 'ALL' ? "bg-blue-600 text-white border-blue-600" : "bg-slate-100 text-slate-700 border-slate-200")}>الكل</button>
+                              {syncedTaskModels.map(m => (
+                                <button key={m.name} type="button" onClick={() => setSelectedModelForOptions(m.name)} className={cn("px-2 py-0.5 text-[9px] font-bold rounded-md border transition-all cursor-pointer", selectedModelForOptions === m.name ? "bg-blue-600 text-white border-blue-600" : "bg-slate-100 text-slate-700 border-slate-200")}>{m.name}</button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : undefined
+                      }
                       onSelect={(opt) => {
-                        const label = Array.isArray(opt) ? opt[opt.length - 1] : opt;
+                        const rawLabel = Array.isArray(opt) ? opt[opt.length - 1] : opt;
+                        const label = (selectedModelForOptions && selectedModelForOptions !== 'ALL') ? `${rawLabel} (${selectedModelForOptions})` : rawLabel;
                         let replace = false;
                         const hasThisParticularBefore = taskIssueText.includes(label);
                         const hasBefore = taskIssueText.includes('الفحص: ');
@@ -25555,8 +27857,22 @@ export default function App() {
                       forceCenter={true}
                       buttonClassName="w-full px-0.5 sm:px-1 py-0.5 min-h-[26px] h-6.5 text-[8.5px] sm:text-[9.5px] font-bold justify-center rounded-lg shadow-2xs min-w-0"
                       selectedValues={parseSelectedOptionsFromText(taskIssueText, 'storage')}
+                      topContent={
+                        syncedTaskModels.length > 0 ? (
+                          <div className="mb-2 pb-1.5 border-b border-slate-200 text-right space-y-1" dir="rtl">
+                            <span className="text-[10px] font-black text-blue-900 block px-1">تحديد الموديل لموقع الحفظ:</span>
+                            <div className="flex flex-wrap gap-1 px-1">
+                              <button type="button" onClick={() => setSelectedModelForOptions('ALL')} className={cn("px-2 py-0.5 text-[9px] font-bold rounded-md border transition-all cursor-pointer", selectedModelForOptions === 'ALL' ? "bg-blue-600 text-white border-blue-600" : "bg-slate-100 text-slate-700 border-slate-200")}>الكل</button>
+                              {syncedTaskModels.map(m => (
+                                <button key={m.name} type="button" onClick={() => setSelectedModelForOptions(m.name)} className={cn("px-2 py-0.5 text-[9px] font-bold rounded-md border transition-all cursor-pointer", selectedModelForOptions === m.name ? "bg-blue-600 text-white border-blue-600" : "bg-slate-100 text-slate-700 border-slate-200")}>{m.name}</button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : undefined
+                      }
                       onSelect={(opt) => {
-                        const label = Array.isArray(opt) ? opt[opt.length - 1] : opt;
+                        const rawLabel = Array.isArray(opt) ? opt[opt.length - 1] : opt;
+                        const label = (selectedModelForOptions && selectedModelForOptions !== 'ALL') ? `${rawLabel} (${selectedModelForOptions})` : rawLabel;
                         setTaskIssueText(prev => appendToIssueText(prev, 'storage', label));
                       }}
                       onUpdateOptions={(newOpts) => updateDbOptions('storageLocations', newOpts)}
@@ -25831,33 +28147,74 @@ export default function App() {
             </fieldset>
           </div>
 
-          {/* Notes Section */}
+          {/* Notes Section & Technician/Employee Dropdown */}
           <div className="mt-2 pt-2 border-t border-slate-200">
-            <button
-              type="button"
-              onClick={() => {
-                const targetTaskId = editingId 
-                  ? String(editingId) 
-                  : String(tasks.length > 0 ? Math.max(...tasks.map(t => Number(t.id) || 0)) + 1 : 1);
-                setFloatingModalTab('notes');
-                setIsFloatingModalOpen(true);
-                setEditingNoteId(null);
-                setNewNoteTitle(customerSearch ? `ملاحظة مهمة: ${customerSearch}` : `ملاحظة مهمة #${targetTaskId}`);
-                setNewNoteContent('');
-                setNewNoteColor('#ffffff');
-                setNewNoteTag('مهمة');
-                setNewNoteTaskId(targetTaskId);
-                setNewNoteCustomerId('');
-                setNewNoteInventoryId('');
-                setNewNoteAccountId('');
-                setIsAddingNote(true);
-              }}
-              className="mb-2 px-3 py-1 sm:px-3 sm:py-1 rounded-lg border border-emerald-500 bg-yellow-300 text-yellow-950 font-black flex items-center gap-1.5 cursor-pointer shadow-2xs hover:scale-[1.01] active:scale-95 transition-all text-xs"
-              title="إضافة أو استعراض ملاحظات المهمة"
-            >
-              <StickyNote className="w-4 h-4 text-yellow-950 stroke-[2.5] shrink-0" />
-              <span className="text-[11px] font-black">{editingId ? 'ملاحظات المهمة' : 'إضافة ملاحظة جديدة للمهمة'}</span>
-            </button>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const targetTaskId = editingId 
+                    ? String(editingId) 
+                    : String(tasks.length > 0 ? Math.max(...tasks.map(t => Number(t.id) || 0)) + 1 : 1);
+                  setFloatingModalTab('notes');
+                  setIsFloatingModalOpen(true);
+                  setEditingNoteId(null);
+                  setNewNoteTitle(customerSearch ? `ملاحظة مهمة: ${customerSearch}` : `ملاحظة مهمة #${targetTaskId}`);
+                  setNewNoteContent('');
+                  setNewNoteColor('#ffffff');
+                  setNewNoteTag('مهمة');
+                  setNewNoteTaskId(targetTaskId);
+                  setNewNoteCustomerId('');
+                  setNewNoteInventoryId('');
+                  setNewNoteAccountId('');
+                  setIsAddingNote(true);
+                }}
+                className="px-2.5 py-1.5 rounded-lg border border-emerald-500 bg-yellow-300 hover:bg-yellow-400 text-yellow-950 font-black flex items-center gap-1.5 cursor-pointer shadow-2xs hover:scale-[1.01] active:scale-95 transition-all text-xs shrink-0"
+                title="إضافة أو استعراض ملاحظات المهمة"
+              >
+                <StickyNote className="w-4 h-4 text-yellow-950 stroke-[2.5] shrink-0" />
+                <span className="text-[11px] font-black">{editingId ? 'ملاحظات المهمة' : 'إضافة ملاحظة جديدة'}</span>
+              </button>
+
+              {/* Technician / Employee Dropdown opposite Task Notes Icon */}
+              <div className="flex-1 max-w-[210px] min-w-[130px]">
+                {(() => {
+                  const initialTech = editingId 
+                    ? (tasks.find(t => t.id === editingId)?.technician || '') 
+                    : (currentUser?.name || currentUser?.username || '');
+                  const currentTech = (selectedTaskTechnician !== undefined && selectedTaskTechnician !== null) ? selectedTaskTechnician : initialTech;
+                  const availableTechList = Array.from(new Set([
+                    ...users.map(u => u.name || u.username),
+                    ...(technicianOptions || [])
+                  ])).filter(Boolean);
+
+                  return (
+                    <>
+                      <input type="hidden" name="technician" value={currentTech} />
+                      <TextOptionsDropdown 
+                        label={
+                          <span className="flex items-center gap-1 text-slate-800 font-bold truncate">
+                            <Users className="w-3 h-3 text-emerald-600 shrink-0" />
+                            <span className="truncate">الفني: {currentTech || 'غير محدد'}</span>
+                          </span>
+                        }
+                        options={availableTechList.length > 0 ? availableTechList : ['غير محدد', 'فني 1', 'فني 2']}
+                        selectedValues={currentTech ? [currentTech] : []}
+                        forceCenter={true}
+                        buttonClassName="w-full px-2 py-1 h-7 text-[10.5px] sm:text-xs font-bold justify-between rounded-lg shadow-2xs border border-slate-200 bg-slate-50 hover:bg-slate-100"
+                        onSelect={(opt) => {
+                          const val = Array.isArray(opt) ? opt[opt.length - 1] : opt;
+                          setSelectedTaskTechnician(val);
+                        }}
+                        showEditControls={canEditOptions}
+                        onUpdateOptions={(newOpts) => updateDbOptions('technicianOptions', newOpts)}
+                        closeOnSelect={true}
+                      />
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
             {(() => {
               const currentTaskIdStr = editingId 
                 ? String(editingId) 
@@ -25988,7 +28345,7 @@ export default function App() {
                     className={cn(
                       "py-2 px-1 rounded-xl text-xs font-black transition-all border outline-none cursor-pointer flex flex-col items-center justify-center gap-1 shadow-2xs",
                       isSelected
-                        ? "bg-slate-900 text-white border-slate-900 ring-2 ring-slate-800/25"
+                        ? "bg-emerald-600 text-white border-emerald-600 ring-2 ring-emerald-500/25 shadow-xs"
                         : "bg-white hover:bg-slate-100 text-slate-700 border-slate-200"
                     )}
                   >
@@ -27425,7 +29782,7 @@ export default function App() {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h4 className="font-bold text-slate-800 text-sm">قائمة المستخدمين</h4>
-              <Button onClick={() => setEditingUser({ username: '', pin: '', role: 'user', permissions: { canManageCustomers: false, canManageInventory: false, canEditOptions: false, canChangeFilters: false, canAccessAccounts: false, canAccessReports: false, canViewStats: false, canEditTasks: true, canDeleteTasks: false, canManageUsers: false, canChangeSettings: false, canViewTaskStatuses: false, canExportData: false, canImportData: false }, createdAt: new Date().toISOString() })} variant="primary" className="text-[10px] py-1.5">
+              <Button onClick={() => setEditingUser({ username: '', pin: '', role: 'user', permissions: { canManageCustomers: false, canManageInventory: false, canEditOptions: false, canChangeFilters: false, canAccessAccounts: false, canAccessReports: false, canViewStats: false, canEditTasks: true, canDeleteTasks: false, canManageUsers: false, canChangeSettings: false, canViewTaskStatuses: false, canExportData: false, canImportData: false, canUseVoiceAssistant: true, canUseTools: true, canUseFlashInterface: true, canManageQuickNotes: true }, createdAt: new Date().toISOString() })} variant="primary" className="text-[10px] py-1.5">
                 إضافة مستخدم جديد
               </Button>
             </div>
@@ -27462,6 +29819,88 @@ export default function App() {
                   </div>
                 </div>
               ))}
+            </div>
+
+            {/* قسم إدارة وتعديل الفنيين والموظفين */}
+            <div className="pt-4 border-t border-slate-200 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4 text-emerald-600" />
+                  <h4 className="font-bold text-slate-800 text-sm">إدارة الفنيين والموظفين المسؤولين عن صيانة المهام</h4>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  id="new-technician-input-modal"
+                  placeholder="أدخل اسم الفني أو الموظف الجديد..."
+                  className="flex-1 p-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const val = e.currentTarget.value.trim();
+                      if (val && !technicianOptions.includes(val)) {
+                        updateDbOptions('technicianOptions', [...technicianOptions, val]);
+                        e.currentTarget.value = '';
+                      }
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  onClick={() => {
+                    const input = document.getElementById('new-technician-input-modal') as HTMLInputElement;
+                    const val = input?.value.trim();
+                    if (val && !technicianOptions.includes(val)) {
+                      updateDbOptions('technicianOptions', [...technicianOptions, val]);
+                      if (input) input.value = '';
+                    }
+                  }}
+                  variant="primary"
+                  className="px-3.5 text-xs py-1.5"
+                >
+                  إضافة فني
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[200px] overflow-y-auto pr-1">
+                {Array.from(new Set([...users.map(u => u.name || u.username), ...technicianOptions])).filter(Boolean).map((tech, tIdx) => (
+                  <div key={tIdx} className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-2 shadow-3xs">
+                    <span className="text-xs font-bold text-slate-800 truncate">{tech}</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const renamed = window.prompt('تعديل اسم الفني / الموظف:', tech);
+                          if (renamed && renamed.trim() && renamed.trim() !== tech) {
+                            const newOpts = technicianOptions.map(t => t === tech ? renamed.trim() : t);
+                            if (!newOpts.includes(renamed.trim())) newOpts.push(renamed.trim());
+                            updateDbOptions('technicianOptions', newOpts);
+                          }
+                        }}
+                        className="p-1.5 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors cursor-pointer"
+                        title="تعديل اسم الفني"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (safeConfirm(`هل أنت متأكد من حذف الفني "${tech}" من الخيارات؟`)) {
+                            const newOpts = technicianOptions.filter(t => t !== tech);
+                            updateDbOptions('technicianOptions', newOpts);
+                          }
+                        }}
+                        className="p-1.5 hover:bg-red-100 text-red-600 rounded-lg transition-colors cursor-pointer"
+                        title="حذف الفني"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -27506,6 +29945,10 @@ export default function App() {
                     { key: 'canViewTaskStatuses', label: 'عرض حالات المهام للغير' },
                     { key: 'canExportData', label: 'تصدير البيانات' },
                     { key: 'canImportData', label: 'استيراد البيانات' },
+                    { key: 'canUseVoiceAssistant', label: 'استخدام المساعد الذكي والصوتي' },
+                    { key: 'canUseTools', label: 'استخدام قائمة الأدوات والإضافات' },
+                    { key: 'canUseFlashInterface', label: 'الواجهة القلاشية/العائمة وتصغير التطبيق' },
+                    { key: 'canManageQuickNotes', label: 'إدارة الملاحظات والتنبيهات السريعة' },
                   ].map(({ key, label }) => (
                     <label key={key} className="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-slate-50 rounded-lg transition-colors">
                       <input 
@@ -27563,13 +30006,17 @@ export default function App() {
           setTransactionDescription('');
           setTransactionCategory('');
           setTransactionCustomerName('');
+          setTransactionAmountInput('');
           setTransactionModalCurrency(systemCurrency);
+          setTransactionCashAccountId('');
         }} 
-        title={editingId ? 'تعديل معاملة مالية' : (transactionType === 'income' ? 'إضافة ما له' : 'إضافة ما عليه')}
+        title={editingId ? 'تعديل معاملة مالية' : (transactionType === 'income' ? 'إضافة ما له (سند قبض وارد)' : 'إضافة ما عليه (سند صرف منصرف)')}
       >
         <form onSubmit={(e) => {
           e.preventDefault();
           const formData = new FormData(e.currentTarget);
+          const rawCashId = formData.get('cashAccountId');
+          const chosenCashId = rawCashId ? Number(rawCashId) : (typeof transactionCashAccountId === 'number' ? transactionCashAccountId : defaultCashbox?.id);
           handleTransactionSubmit({
             type: transactionType,
             description: formData.get('description') as string,
@@ -27577,100 +30024,273 @@ export default function App() {
             currency: (formData.get('currency') as Currency) || transactionModalCurrency || systemCurrency,
             category: transactionCategory || 'أخرى',
             customerName: formData.get('customerName') as string || null,
+            cashAccountId: chosenCashId,
             date: formData.get('date') ? new Date(formData.get('date') as string).toISOString() : new Date().toISOString(),
           });
         }} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <div className="flex justify-between items-center mb-1">
-                <label className="text-xs font-bold text-slate-700">البيان</label>
-                <TextOptionsDropdown 
-                  label="التصنيفات" 
-                  customButton={
-                    <div className="flex items-center gap-1.5 cursor-pointer group" title="انقر لاختيار التصنيف من تصنيفات الحسابات">
-                      <span className="text-[10px] font-bold text-slate-600 group-hover:text-emerald-700 transition-colors select-none">التصنيف:</span>
-                      {transactionCategory ? (
-                        <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-bold shadow-xs border border-emerald-200">
-                          {transactionCategory}
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-slate-400 italic">بدون تصنيف</span>
-                      )}
-                      <ChevronDown className="w-3 h-3 text-slate-500 group-hover:text-emerald-600 transition-colors" />
-                    </div>
-                  }
-                  options={accountClassificationOptions}
-                  onSelect={(opt) => {
-                    const selected = Array.isArray(opt) ? (opt[opt.length - 1] || '') : opt;
-                    setTransactionCategory(selected);
-                  }}
-                  showEditControls={false}
-                  multiSelect={false}
-                  allowDuplicates={false}
-                  closeOnSelect={true}
-                  selectedValues={transactionCategory ? [transactionCategory] : []}
-                  forceCenter={true}
-                />
-              </div>
-              <Input 
-                name="description" 
-                value={transactionDescription} 
-                onChange={(e) => setTransactionDescription(e.target.value)} 
-                placeholder="اكتب بيان المعاملة المالية..." 
-                className="w-full p-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500" 
-              />
+
+          {/* شريط اختصارات السندات اليومية السريعة مع إمكانية التحديد الفوري لحساب أو عميل */}
+          <div className="p-2 bg-slate-100/90 border border-slate-200 rounded-xl space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-black text-slate-700 flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                <span>اختصارات وتفضيلات السندات اليومية (نقرة للتعبئة)</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsDailyBondPreferencesModalOpen(true)}
+                className="text-[10px] font-black text-emerald-700 hover:text-emerald-900 flex items-center gap-1 cursor-pointer bg-white px-1.5 py-0.5 rounded border border-emerald-200 shadow-3xs"
+              >
+                <Settings2 className="w-3 h-3 text-emerald-600" />
+                <span>إدارة التفضيلات</span>
+              </button>
             </div>
-            <div className="space-y-1">
-              <label className="text-sm font-bold text-slate-700">التاريخ</label>
-              <input type="datetime-local" name="date" defaultValue={editingId ? transactions.find(t => t.id === editingId)?.date.slice(0, 16) : new Date().toISOString().slice(0, 16)} className="w-full p-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500" />
+            
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin scrollbar-thumb-slate-300">
+              {getDailyBondShortcuts().map((sc) => {
+                const isInc = sc.type === 'income';
+                return (
+                  <button
+                    key={sc.id}
+                    type="button"
+                    onClick={() => {
+                      setTransactionType(sc.type);
+                      setTransactionDescription(sc.description || sc.title);
+                      if (sc.category) setTransactionCategory(sc.category);
+                      if (sc.targetName) setTransactionCustomerName(sc.targetName);
+                      if (sc.currency) setTransactionModalCurrency(sc.currency);
+                      if (sc.defaultAmount) setTransactionAmountInput(String(sc.defaultAmount));
+                      setTransactionCashAccountId(defaultCashbox?.id || '');
+                    }}
+                    className={`flex items-center gap-1 py-1 px-2 rounded-lg border text-right transition-all shrink-0 text-[10px] font-black cursor-pointer shadow-3xs active:scale-95 ${
+                      isInc 
+                        ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300' 
+                        : 'bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-300'
+                    }`}
+                    title={`انقر لتطبيق سند ${isInc ? 'القبض' : 'الصرف'}: ${sc.title}`}
+                  >
+                    {isInc ? <ArrowUpRight className="w-3 h-3 text-emerald-600" /> : <ArrowDownLeft className="w-3 h-3 text-rose-600" />}
+                    <span>{sc.title}</span>
+                    {sc.targetName && (
+                      <span className="text-[9px] opacity-75 font-normal">
+                        ({sc.targetType === 'account' ? 'حساب' : 'عميل'})
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <label className="text-sm font-bold text-slate-700">مرتبط بحساب / عميل (اختياري)</label>
-              <AccountOrCustomerSelect 
-                value={transactionCustomerName} 
-                onChange={(val) => setTransactionCustomerName(val)}
-                customers={customers}
-                cashAccounts={cashAccounts}
-                placeholder="-- غير مرتبط بحساب أو عميل --"
-                className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 text-sm font-bold text-slate-700"
-                onQuickCreateAccount={async (newAccName) => {
-                  const existing = cashAccounts.find(a => a.name.trim().toLowerCase() === newAccName.trim().toLowerCase());
-                  if (!existing) {
-                    await db.cashAccounts.add({
-                      name: newAccName.trim(),
-                      type: 'general',
-                      balance: 0,
-                      currency: transactionModalCurrency || systemCurrency || 'RY',
-                      classification: 'حسابات عامة',
-                      createdAt: new Date().toISOString(),
-                      notes: 'حساب مالي أضيف تلقائياً من نافذة المعاملات',
-                      statement: transactionDescription || 'معاملة مالية'
-                    });
-                    toast.success(`تمت إضافة الحساب "${newAccName}" إلى الحسابات والمركز المالي`);
-                  }
-                }}
-              />
+
+          {/* 1. المربع الأول في النافذة: اسم الحساب أو العميل */}
+          <div className="space-y-1 bg-white p-2.5 rounded-xl border border-slate-200/90 shadow-2xs">
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                <UserIcon className="w-4 h-4 text-emerald-600" />
+                <span>اسم الحساب أو العميل *</span>
+              </label>
+              <span className="text-[10px] font-bold text-slate-500">
+                {transactionCustomerName ? 'سيتم قيده في كشف حسابه' : 'انقر لاختيار حساب أو عميل أو كتابة اسم جديد'}
+              </span>
             </div>
+            <AccountOrCustomerSelect 
+              value={transactionCustomerName} 
+              onChange={(val) => setTransactionCustomerName(val)}
+              customers={customers}
+              cashAccounts={cashAccounts}
+              placeholder="انقر لاختيار حساب/عميل أو اكتب اسماً جديداً..."
+              className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm font-bold text-slate-900"
+              onQuickCreateAccount={async (newAccName) => {
+                const existing = cashAccounts.find(a => a.name.trim().toLowerCase() === newAccName.trim().toLowerCase());
+                if (!existing) {
+                  await db.cashAccounts.add({
+                    name: newAccName.trim(),
+                    type: 'general',
+                    balance: 0,
+                    currency: transactionModalCurrency || systemCurrency || 'RY',
+                    classification: 'حسابات عامة',
+                    createdAt: new Date().toISOString(),
+                    notes: 'حساب مالي مستقل أضيف تلقائياً من نافذة المعاملات',
+                    statement: transactionDescription || 'معاملة مالية'
+                  });
+                  toast.success(`تمت إضافة الحساب المستقل "${newAccName}" إلى الحسابات والمركز المالي`);
+                }
+              }}
+            />
+          </div>
+
+          {/* 2. المربع الثاني: المبلغ والعملة + التاريخ والصندوق/الخزينة */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="text-sm font-bold text-slate-700">المبلغ والعملة</label>
+              <label className="text-xs font-bold text-slate-700">المبلغ والعملة *</label>
               <div className="flex gap-2">
-                <input type="number" step="any" name="amount" defaultValue={editingId ? transactions.find(t => t.id === editingId)?.amount : ''} className="flex-1 p-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500" />
+                <input 
+                  type="number" 
+                  step="any" 
+                  name="amount" 
+                  required
+                  placeholder="0.00"
+                  key={editingId ? `edit_${editingId}` : `sc_${transactionAmountInput}`}
+                  defaultValue={editingId ? transactions.find(t => t.id === editingId)?.amount : (transactionAmountInput || '')} 
+                  className="flex-1 p-2 text-sm font-black bg-slate-50 border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900" 
+                />
                 <CurrencyDropdown name="currency" value={transactionModalCurrency} onChange={(val) => setTransactionModalCurrency(val as Currency)} 
-                  className="w-24 p-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 flex justify-between items-center"
+                  className="w-28 p-2 bg-slate-50 border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 flex justify-between items-center text-xs font-black"
                 />
               </div>
             </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                  <span>التاريخ</span>
+                </label>
+                <input 
+                  type="datetime-local" 
+                  name="date" 
+                  defaultValue={editingId ? transactions.find(t => t.id === editingId)?.date.slice(0, 16) : new Date().toISOString().slice(0, 16)} 
+                  className="w-full p-2 text-xs bg-slate-50 border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-slate-800" 
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                    <Wallet className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>الصندوق</span>
+                  </label>
+                </div>
+                <select
+                  name="cashAccountId"
+                  value={transactionCashAccountId !== '' ? transactionCashAccountId : (defaultCashbox?.id || '')}
+                  onChange={(e) => setTransactionCashAccountId(e.target.value ? Number(e.target.value) : '')}
+                  className="w-full p-2 text-xs bg-slate-50 border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-slate-800 cursor-pointer"
+                >
+                  {liquidCashAccounts.map((acc) => {
+                    const icon = acc.type === 'cashbox' ? '💵' : acc.type === 'vault' ? '🏦' : acc.type === 'bank' ? '🏛️' : '💳';
+                    const isDef = acc.isDefault || acc.type === 'cashbox';
+                    return (
+                      <option key={acc.id} value={acc.id}>
+                        {icon} {acc.name} {isDef ? '(الافتراضي)' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            </div>
           </div>
-          <Button type="submit" className="w-full" variant={transactionType === 'income' ? 'primary' : 'danger'} disabled={!canAccessAccounts}>
-            {editingId ? 'تحديث المعاملة' : 'حفظ المعاملة'}
-          </Button>
+
+          {/* 3. مربع نص البيان والتصنيف في قاعدة النافذة */}
+          <div className="space-y-1 bg-slate-50/90 p-2.5 rounded-xl border border-slate-200">
+            <div className="flex justify-between items-center mb-1">
+              <label className="text-xs font-black text-slate-800 flex items-center gap-1">
+                <FileText className="w-3.5 h-3.5 text-slate-600" />
+                <span>البيان والملاحظات (الوصف)</span>
+              </label>
+              <TextOptionsDropdown 
+                label="التصنيفات" 
+                customButton={
+                  <div className="flex items-center gap-1.5 cursor-pointer group bg-white px-2 py-0.5 rounded-md border border-slate-200" title="انقر لاختيار التصنيف">
+                    <span className="text-[10px] font-bold text-slate-600 group-hover:text-emerald-700 transition-colors select-none">التصنيف:</span>
+                    {transactionCategory ? (
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                        {transactionCategory}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-slate-400 italic">اختر تصنيفاً</span>
+                    )}
+                    <ChevronDown className="w-3 h-3 text-slate-500 group-hover:text-emerald-600 transition-colors" />
+                  </div>
+                }
+                options={accountClassificationOptions}
+                onSelect={(opt) => {
+                  const selected = Array.isArray(opt) ? (opt[opt.length - 1] || '') : opt;
+                  setTransactionCategory(selected);
+                }}
+                showEditControls={false}
+                multiSelect={false}
+                allowDuplicates={false}
+                closeOnSelect={true}
+                selectedValues={transactionCategory ? [transactionCategory] : []}
+                forceCenter={true}
+              />
+            </div>
+            <Input 
+              name="description" 
+              value={transactionDescription} 
+              onChange={(e) => setTransactionDescription(e.target.value)} 
+              placeholder="اكتب بيان وتفاصيل المعاملة المالية..." 
+              className="w-full p-2 text-sm font-semibold bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900" 
+            />
+          </div>
+
+          {/* Action Buttons Row with Save as Shortcut Option */}
+          <div className="flex items-center gap-2 pt-1">
+            <Button type="submit" className="flex-1" variant={transactionType === 'income' ? 'primary' : 'danger'} disabled={!canAccessAccounts}>
+              {editingId ? 'تحديث المعاملة' : 'حفظ المعاملة'}
+            </Button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (!transactionDescription.trim() && !transactionCustomerName.trim()) {
+                  toast.error('يرجى كتابة بيان السند أو تحديد الحساب أولاً لحفظه كاختصار');
+                  return;
+                }
+                const customTitle = prompt('أدخل عنواناً مختصراً لهذا السند اليومي ليظهر في شريط الاختصارات:', transactionDescription || transactionCustomerName || 'سند يومي');
+                if (!customTitle || !customTitle.trim()) return;
+
+                const isCust = customers.some(c => c.name.trim().toLowerCase() === (transactionCustomerName || '').trim().toLowerCase());
+                const tType = transactionCustomerName ? (isCust ? 'customer' : 'account') : 'none';
+
+                addDailyBondShortcut({
+                  title: customTitle.trim(),
+                  type: transactionType === 'expense' ? 'expense' : 'income',
+                  description: transactionDescription || customTitle.trim(),
+                  category: transactionCategory || 'أخرى',
+                  currency: transactionModalCurrency || systemCurrency,
+                  targetType: tType,
+                  targetName: transactionCustomerName ? transactionCustomerName.trim() : undefined,
+                  isFavorite: true,
+                  color: transactionType === 'income' ? 'emerald' : 'rose'
+                });
+                toast.success('تم حفظ هذا السند ضمن الاختصارات والتفضيلات اليومية بنجاح! ⭐');
+              }}
+              className="py-2.5 px-3 bg-amber-50 hover:bg-amber-100 active:bg-amber-200 text-amber-900 border border-amber-300 rounded-xl text-xs font-black transition-all shadow-3xs flex items-center gap-1.5 cursor-pointer shrink-0"
+              title="حفظ هذه البيانات كاختصار وتفضيل يومي متكرر لتعبئته بنقرة واحدة مستقبلاً"
+            >
+              <Star className="w-3.5 h-3.5 text-amber-600 fill-amber-400" />
+              <span className="hidden sm:inline">حفظ كاختصار يومي</span>
+              <span className="sm:hidden">تفضيل ⭐</span>
+            </button>
+          </div>
+
           {editingId && (
             <button type="button" onClick={() => deleteTransaction(editingId)} className="w-full mt-2 text-red-500 font-bold py-2 text-xs hover:bg-red-50 rounded-lg transition-colors">حذف المعاملة</button>
           )}
         </form>
       </Modal>
+
+      {/* Daily Bond Preferences Modal */}
+      <DailyBondPreferencesModal
+        isOpen={isDailyBondPreferencesModalOpen}
+        onClose={() => setIsDailyBondPreferencesModalOpen(false)}
+        customers={customers}
+        cashAccounts={cashAccounts}
+        systemCurrency={systemCurrency}
+        classificationOptions={accountClassificationOptions}
+        onSelectShortcut={(shortcut) => {
+          handleApplyDailyBondShortcut(shortcut);
+          setIsDailyBondPreferencesModalOpen(false);
+        }}
+      />
+
+      {/* نافذة فحص سلامة البيانات وقواعد البيانات */}
+      <DataHealthCheckModal
+        isOpen={isDataHealthModalOpen}
+        onClose={() => setIsDataHealthModalOpen(false)}
+      />
 
       {activeAlarmTask && (
         <AlarmModal 
@@ -27869,19 +30489,36 @@ export default function App() {
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
-                  <input 
-                    type="number"
-                    value={item.amount || ''}
-                    onChange={(e) => {
-                      const newItems = [...depositHistoryItems];
-                      newItems[idx] = { ...item, amount: parseFloat(e.target.value) || 0 };
-                      setDepositHistoryItems(newItems);
-                      setTaskIssueText(prev => syncPaymentsToIssueText(newItems, prev, isHassabIncluded));
-                      updateDepositRefTotal(newItems);
-                    }}
-                    className="w-full min-w-0 text-left p-2 font-bold text-sm bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                    placeholder="مبلغ الدفعة"
-                  />
+                  <div className="relative flex-1 min-w-0">
+                    <input 
+                      type="number"
+                      value={item.amount || ''}
+                      onChange={(e) => {
+                        const newItems = [...depositHistoryItems];
+                        newItems[idx] = { ...item, amount: parseFloat(e.target.value) || 0 };
+                        setDepositHistoryItems(newItems);
+                        setTaskIssueText(prev => syncPaymentsToIssueText(newItems, prev, isHassabIncluded));
+                        updateDepositRefTotal(newItems);
+                      }}
+                      className="w-full min-w-0 text-left p-2 pr-9 font-bold text-sm bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+                      placeholder="مبلغ الدفعة"
+                    />
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 z-10">
+                      <VoiceInputButton
+                        isNumeric={true}
+                        target={`deposit-item-${item.id}`}
+                        title="تعديل مبلغ الدفعة بالصوت"
+                        onResult={(numStr) => {
+                          const val = parseFloat(numStr) || 0;
+                          const newItems = [...depositHistoryItems];
+                          newItems[idx] = { ...item, amount: val };
+                          setDepositHistoryItems(newItems);
+                          setTaskIssueText(prev => syncPaymentsToIssueText(newItems, prev, isHassabIncluded));
+                          updateDepositRefTotal(newItems);
+                        }}
+                      />
+                    </div>
+                  </div>
                   <div className="shrink-0 bg-slate-100 text-slate-600 px-3 py-2 rounded-lg font-bold text-sm">
                     {item.currency}
                   </div>
@@ -27896,18 +30533,34 @@ export default function App() {
           <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2">
             <label className="text-xs font-bold text-slate-700 block">إضافة دفعة جديدة</label>
             <div className="flex gap-2 items-center">
-              <input 
-                type="number" 
-                id="newDepositAmountForm"
-                className="flex-1 min-w-0 p-2 text-sm bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 text-left font-bold"
-                placeholder="أدخل المبلغ..."
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    document.getElementById('addDepositBtn')?.click();
-                  }
-                }}
-              />
+              <div className="relative flex-1 min-w-0">
+                <input 
+                  type="number" 
+                  id="newDepositAmountForm"
+                  className="w-full min-w-0 p-2 pr-9 text-sm bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 text-left font-bold"
+                  placeholder="أدخل المبلغ..."
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      document.getElementById('addDepositBtn')?.click();
+                    }
+                  }}
+                />
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 z-10">
+                  <VoiceInputButton
+                    isNumeric={true}
+                    target="new-deposit-amount"
+                    title="إدخال مبلغ الدفعة بالصوت (يتحول لرقم)"
+                    onResult={(numStr) => {
+                      const input = document.getElementById('newDepositAmountForm') as HTMLInputElement;
+                      if (input) {
+                        input.value = numStr;
+                        input.focus();
+                      }
+                    }}
+                  />
+                </div>
+              </div>
               <CurrencyDropdown name="newDepositCurrencyForm"
                 value={depositFormCurrency}
                 onChange={(val) => setDepositFormCurrency(val as Currency)}
@@ -27992,20 +30645,98 @@ export default function App() {
 
       
       {/* Exit/Logout Confirmation Modal */}
-      <Modal isOpen={isLogoutConfirmOpen} onClose={() => setIsLogoutConfirmOpen(false)} title="تأكيد الخروج">
-        <div className="p-4 text-center space-y-4 dir-rtl">
-          <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-2 text-red-500 shadow-xs">
-            <LogOut className="w-8 h-8" />
+      <Modal 
+        isOpen={isLogoutConfirmOpen} 
+        onClose={() => setIsLogoutConfirmOpen(false)} 
+        title="تأكيد الخروج"
+        headerClassName="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800"
+      >
+        <div className="p-3 sm:p-5 text-center space-y-4 dir-rtl max-w-md mx-auto">
+          {/* أيقونة رأس النافذة بألوان واضحة غير شفافة */}
+          <div className="w-14 h-14 bg-rose-600 dark:bg-rose-600 rounded-2xl flex items-center justify-center mx-auto text-white border-2 border-rose-400 shadow-md">
+            <LogOut className="w-7 h-7 stroke-[2.5]" />
           </div>
-          <p className="text-slate-800 font-bold text-lg">هل تريد حقاً الخروج من التطبيق؟</p>
+          <div>
+            <h3 className="text-slate-900 dark:text-white font-black text-base sm:text-lg">هل ترغب في الخروج من التطبيق؟</h3>
+            <p className="text-xs text-slate-700 dark:text-slate-200 font-bold mt-1">اختر الإجراء الملائم لحفظ بياناتك أو إبقاء المساعد نشطاً:</p>
+          </div>
 
+          <div className="space-y-2.5 pt-1 text-right">
+            {/* خيار 1: النسخ الاحتياطي السريع والأمان (موصى به) - أيقونات ملونة واضحة دون شفافية */}
+            <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border-2 border-emerald-300 dark:border-emerald-700 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-xl bg-emerald-600 text-white border border-emerald-500 shadow-md shrink-0">
+                  <Database className="w-5 h-5 stroke-[2.5]" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black text-emerald-950 dark:text-emerald-100">النسخ الاحتياطي للبيانات</h4>
+                  <p className="text-[10.5px] text-emerald-800 dark:text-emerald-200 font-bold">تأمين جميع الحسابات والمهام قبل المغادرة</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await exportData('json', false);
+                      toast.success('تم تحميل وحفظ النسخة الاحتياطية .json مباشرة بنجاح');
+                    } catch (e) {
+                      console.error('Direct backup failed:', e);
+                      toast.error('تعذر تنزيل النسخة الاحتياطية');
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs transition-all active:scale-95 cursor-pointer flex items-center gap-1.5 border border-emerald-500"
+                  title="تنزيل ملف النسخة الاحتياطية .json مباشرة للجهاز في الخلفية"
+                >
+                  <Download className="w-3.5 h-3.5 stroke-[2.5]" />
+                  <span>تحميل مباشر .json</span>
+                </button>
+                <button
+                  type="button"
+                  title="نسخ احتياطي فوري إلى Google Drive"
+                  onClick={() => {
+                    setIsLogoutConfirmOpen(false);
+                    window.dispatchEvent(new CustomEvent('trigger-drive-backup'));
+                  }}
+                  className="p-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black shadow-xs border border-emerald-600 transition-all active:scale-95 cursor-pointer flex items-center gap-1"
+                >
+                  <Cloud className="w-4 h-4 stroke-[2.5]" />
+                  <span className="text-[10px]">درايف</span>
+                </button>
+              </div>
+            </div>
 
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-3 border-t border-slate-100">
-            <Button 
+            {/* خيار 2: الخروج وتفعيل المساعد العائم على شاشة الهاتف - أيقونة بارزة بلون صريح */}
+            <button 
               type="button" 
-              variant="danger" 
-              className="w-full font-bold text-xs py-2.5 flex items-center justify-center gap-1.5"
+              className="w-full p-3.5 rounded-2xl bg-indigo-50 hover:bg-indigo-100/90 dark:bg-indigo-950/40 border-2 border-indigo-300 dark:border-indigo-700 shadow-xs flex items-center justify-between gap-2.5 transition-all active:scale-98 cursor-pointer text-right group"
+              onClick={async () => {
+                setIsLogoutConfirmOpen(false);
+                window.dispatchEvent(new CustomEvent('exit_to_floating_assistant'));
+                try {
+                  const { App: CapApp } = await import('@capacitor/app');
+                  if (CapApp && CapApp.minimizeApp) {
+                    await CapApp.minimizeApp();
+                  }
+                } catch (e) {}
+              }}
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-xl bg-indigo-600 text-white border border-indigo-500 shadow-md shrink-0">
+                  <Layers className="w-5 h-5 stroke-[2.5]" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black text-indigo-950 dark:text-indigo-100">تصغير وتفعيل المساعد العائم</h4>
+                  <p className="text-[10.5px] text-indigo-800 dark:text-indigo-200 font-bold">إبقاء المساعد متاحاً فوق التطبيقات الأخرى</p>
+                </div>
+              </div>
+              <ChevronLeft className="w-5 h-5 text-indigo-700 dark:text-indigo-300 font-black group-hover:-translate-x-1 transition-transform shrink-0 stroke-[2.5]" />
+            </button>
+
+            {/* خيار 3: الخروج النهائي المباشر - أيقونة ملونة واضحة */}
+            <button 
+              type="button" 
+              className="w-full py-2.5 px-3.5 bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/50 text-rose-900 dark:text-rose-100 border-2 border-rose-300 dark:border-rose-700 shadow-xs rounded-2xl flex items-center justify-center gap-2 font-black text-xs transition-all active:scale-98 cursor-pointer"
               onClick={async () => {
                 setIsLogoutConfirmOpen(false);
                 try {
@@ -28024,45 +30755,20 @@ export default function App() {
                 setLoginError('');
               }}
             >
-              <LogOut className="w-4 h-4 text-red-300" />
-              <span>نعم، خروج</span>
-            </Button>
-            
-            <div className="flex gap-1 w-full">
-              <Button 
-                type="button" 
-                variant="primary" 
-                className="flex-1 font-bold text-xs py-2.5 bg-slate-800 hover:bg-slate-900 text-white flex items-center justify-center gap-1.5"
-                onClick={() => {
-                  setIsLogoutConfirmOpen(false);
-                  setIsBackupModalOpen(true);
-                }}
-              >
-                <Database className="w-4 h-4 text-green-400" />
-                <span>النسخ الاحتياطي</span>
-              </Button>
-              <Button
-                type="button"
-                variant="primary"
-                className="px-2.5 bg-slate-800 hover:bg-slate-900 text-white flex items-center justify-center shrink-0"
-                title="نسخ احتياطي إلى درايف مباشرة"
-                onClick={() => {
-                  setIsLogoutConfirmOpen(false);
-                  window.dispatchEvent(new CustomEvent('trigger-drive-backup'));
-                }}
-              >
-                <Cloud className="w-4 h-4 text-green-400" />
-              </Button>
-            </div>
+              <div className="p-1 rounded-lg bg-rose-600 text-white shadow-xs shrink-0 flex items-center justify-center">
+                <LogOut className="w-4 h-4 stroke-[2.5]" />
+              </div>
+              <span>الخروج وإغلاق التطبيق نهائياً</span>
+            </button>
 
-            <Button 
+            {/* زر الإلغاء والبقاء في التطبيق */}
+            <button 
               type="button" 
-              variant="secondary" 
-              className="w-full font-bold text-xs py-2.5"
+              className="w-full py-2.5 px-3 bg-slate-200 hover:bg-slate-300 text-slate-900 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-100 font-black text-xs rounded-xl border border-slate-300 dark:border-slate-600 transition-all cursor-pointer shadow-xs"
               onClick={() => setIsLogoutConfirmOpen(false)}
             >
-              إلغاء
-            </Button>
+              إلغاء والبقاء في التطبيق
+            </button>
           </div>
         </div>
       </Modal>
@@ -28128,7 +30834,8 @@ export default function App() {
                   autoFocus
                   value={loginPin}
                   onChange={(e) => {
-                    const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 4);
+                    const normalized = toStandardDigits(e.target.value);
+                    const val = normalized.replace(/[^0-9]/g, '').slice(0, 4);
                     setLoginPin(val);
                     setLoginError('');
                     if (val.length === 4) {
@@ -28436,9 +31143,9 @@ export default function App() {
             <button 
               type="button" 
               onClick={() => setSelectedFullImage(null)} 
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 rounded-xl text-xs font-black shadow-lg transition-all border border-slate-700 hover:scale-105 cursor-pointer"
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-white/95 hover:bg-white active:scale-95 text-slate-800 rounded-xl text-xs font-black shadow-lg transition-all border border-slate-200 hover:scale-105 cursor-pointer"
             >
-              <X className="w-4 h-4 text-red-500 stroke-[3]" />
+              <X className="w-4 h-4 text-rose-500 stroke-[3]" />
               <span>إلغاء عرض الصورة</span>
             </button>
 
@@ -28542,104 +31249,72 @@ export default function App() {
         </div>
       )}
 
+      {/* أيقونة المساعد الصوتي الذكي وأيقونة الأدوات المدمجة أسفلها */}
+      {uiSettings.assistantIconEnabled !== false && (canUseVoiceAssistant || canUseTools) && (
+        <div 
+          className={cn(
+            "fixed z-[90] flex items-center justify-center select-none transition-all duration-300 gap-2.5",
+            (voiceSettingsState.showAppAssistantIcons === false && !isToolsRevealed) && "pointer-events-none opacity-0 invisible",
+            uiSettings.assistantPosition === 'bottom-left' 
+              ? "bottom-[max(4.5rem,calc(env(safe-area-inset-bottom,1.25rem)+3.5rem))] left-4 sm:bottom-20 sm:left-6" 
+              : uiSettings.assistantPosition === 'top-right' 
+                ? "top-16 right-4 sm:right-6" 
+                : uiSettings.assistantPosition === 'top-left' 
+                  ? "top-16 left-4 sm:left-6" 
+                  : "bottom-[max(4.5rem,calc(env(safe-area-inset-bottom,1.25rem)+3.5rem))] right-4 sm:bottom-20 sm:right-6"
+          )}
+        >
+          <div className="relative flex flex-col items-center justify-center">
+            {/* أيقونة المساعد الصوتي الذكي: النقر عليها يظهر أيقونة الأدوات أسفلها ويفتح الدردشة وتفعيل الاستماع */}
+            {canUseVoiceAssistant && (
+              <VoiceAssistant 
+                hideMainButton={voiceSettingsState.showAppAssistantIcons === false}
+                className={cn("w-14 h-14 p-3 rounded-full shadow-2xl z-10", voiceSettingsState.showAppAssistantIcons === false && "hidden")}
+                onClick={(e, toggleVoice) => {
+                  // إظهار أو تبديل ظهور أيقونة الأدوات أسفل المساعد فوراً
+                  if (canUseTools) {
+                    setIsToolsRevealed(prev => !prev);
+                  }
+                  // تفعيل الاستماع الصوتي وظهور شاشة الدردشة
+                  toggleVoice();
+                }}
+                onClose={() => {
+                  setIsAssistantUnlinked(false);
+                  setIsAssistantMenuOpen(false);
+                  setIsToolsRevealed(false);
+                }}
+              />
+            )}
 
-      {/* قائمة الأدوات السريعة العائمة في أسفل اليمين */}
-      <div className="fixed bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] right-4 sm:right-6 z-[200] flex flex-col items-end gap-3 text-right select-none pointer-events-none">
-        {currentUser && (
-          <div className="relative flex flex-col items-end gap-3 pointer-events-auto">
-            <AnimatePresence>
-              {isAssistantMenuOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: 20, scale: 0.9 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 20, scale: 0.9 }}
-                  className="flex flex-col gap-3 mb-2"
-                >
-                  <div className="flex items-center gap-3 justify-end group cursor-pointer" onClick={() => { setFloatingModalTab('notes'); setIsFloatingModalOpen(true); setIsAssistantMenuOpen(false); }}>
-                    <span className="bg-amber-500 text-white border border-amber-300 rounded-xl px-3.5 py-1.5 text-xs font-black shadow-md transition-opacity whitespace-nowrap">الملاحظات</span>
-                    <button className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-400 text-white shadow-xl border-2 border-white flex items-center justify-center hover:scale-110 active:scale-95 transition-all">
-                      <StickyNote className="w-5 h-5" />
-                    </button>
-                  </div>
-                  
-                  <div className="flex items-center gap-3 justify-end group cursor-pointer" onClick={() => { setFloatingModalTab('reminders'); setIsFloatingModalOpen(true); setIsAssistantMenuOpen(false); }}>
-                    <span className="bg-indigo-600 text-white border border-indigo-300 rounded-xl px-3.5 py-1.5 text-xs font-black shadow-md transition-opacity whitespace-nowrap">التنبيهات والتذكيرات</span>
-                    <button className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white shadow-xl border-2 border-white flex items-center justify-center hover:scale-110 active:scale-95 transition-all">
-                      <Bell className="w-5 h-5" />
-                    </button>
-                  </div>
-                  
-                  <div className="flex items-center gap-3 justify-end group cursor-pointer" onClick={() => { setFloatingModalTab('history'); setIsFloatingModalOpen(true); setIsAssistantMenuOpen(false); }}>
-                    <span className="bg-rose-600 text-white border border-rose-300 rounded-xl px-3.5 py-1.5 text-xs font-black shadow-md transition-opacity whitespace-nowrap">سجل الأمان والعمليات</span>
-                    <button className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-rose-600 to-rose-500 text-white shadow-xl border-2 border-white flex items-center justify-center hover:scale-110 active:scale-95 transition-all">
-                      <History className="w-5 h-5" />
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-3 justify-end group cursor-pointer" onClick={() => { setIsExportSettingsModalOpen(true); setIsAssistantMenuOpen(false); }}>
-                    <span className="bg-sky-600 text-white border border-sky-300 rounded-xl px-3.5 py-1.5 text-xs font-black shadow-md transition-opacity whitespace-nowrap">إعدادات الإخراج والأبعاد (A4/A3/جوال)</span>
-                    <button className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-sky-600 to-sky-500 text-white shadow-xl border-2 border-white flex items-center justify-center hover:scale-110 active:scale-95 transition-all">
-                      <SlidersHorizontal className="w-5 h-5" />
-                    </button>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            <div className="flex items-center gap-2 relative">
-              {/* أيقونة الأدوات السريعة - مصغرة لنصف حجمها ومخفية أسفل أيقونة المساعد حتى يتم فك الربط */}
-              <div className="relative">
-                <button 
-                  onClick={() => setIsAssistantMenuOpen(!isAssistantMenuOpen)}
-                  className={cn(
-                    "w-6 h-6 rounded-full border shadow-md flex items-center justify-center hover:scale-110 active:scale-95 transition-all duration-300",
-                    isAssistantUnlinked 
-                      ? "opacity-100 scale-100 pointer-events-auto z-[201]" 
-                      : "opacity-0 scale-0 pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 -z-10",
-                    isAssistantMenuOpen 
-                      ? "bg-slate-800 text-white border-slate-700" 
-                      : "bg-white text-slate-700 border-slate-300"
-                  )}
-                  title="أدوات سريعة"
-                >
-                  {isAssistantMenuOpen ? <X className="w-3 h-3" /> : <LayoutGrid className="w-3 h-3" />}
-                </button>
-                {isAssistantUnlinked && (notes.length > 0 || reminders.filter(r => !r.isCompleted).length > 0) && (
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white font-black text-[8px] min-w-[14px] h-[14px] px-0.5 rounded-full flex items-center justify-center shadow-sm animate-pulse z-[202] pointer-events-none border border-white">
-                    {notes.length + reminders.filter(r => !r.isCompleted).length}
-                  </span>
+            {/* أيقونة الأدوات: تظهر وتبرز أسفل أيقونة المساعد عند النقر على المساعد */}
+            {canUseTools && (
+              <button
+                type="button"
+                id="tools-dock-btn"
+                onClick={() => setIsFloatingModalOpen(true)}
+                title="الأدوات والملاحظات والتنبيهات السريعة"
+                className={cn(
+                  "w-11 h-11 rounded-full bg-amber-50 hover:bg-amber-100 dark:bg-slate-800 text-amber-600 hover:text-amber-700 dark:text-amber-400 shadow-xl border-2 border-amber-400 flex items-center justify-center transition-all duration-300 cursor-pointer group active:scale-95",
+                  isToolsRevealed || !canUseVoiceAssistant
+                    ? "mt-2 opacity-100 scale-100 pointer-events-auto z-20"
+                    : "absolute top-2 opacity-0 scale-75 pointer-events-none z-0"
                 )}
-              </div>
-
-              {/* أيقونة المساعد الصوتي الرئيسي - مع تبديل المكان وفك الربط بالنقرة الأولى والتفعيل بالنقرة الثانية */}
-              <div className="relative z-[203]">
-                <VoiceAssistant 
-                  onClick={(_e, toggleVoice) => {
-                    if (!isAssistantUnlinked) {
-                      // النقرة الأولى: فك ربط الأيقونتين دون تفعيل نافذة المساعد أو الاستماع
-                      setIsAssistantUnlinked(true);
-                      try {
-                        if (navigator.vibrate) navigator.vibrate([25, 20]);
-                      } catch (err) {}
-                    } else {
-                      // النقرة الثانية: تفعيل نافذة المساعد مع الاستماع للأوامر الصوتية فوراً
-                      toggleVoice();
-                    }
-                  }}
-                  onClose={() => {
-                    setIsAssistantUnlinked(false);
-                    setIsAssistantMenuOpen(false);
-                  }}
-                />
-              </div>
-            </div>
+              >
+                <Wrench className="w-5 h-5 transition-transform duration-300 group-hover:rotate-45" />
+              </button>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* لم يعد يتم إظهار نافذة تلميح المساعد المنبثقة للعودة لشاشة التطبيق الرئيسية هنا بناءً على رغبة المستخدم، بل أصبح التلميح في أعلى نافذة المساعد عند فتحه فقط */}
 
       <VoiceAssistantSettingsModal
         isOpen={isGlobalVoiceSettingsOpen}
-        onClose={() => setIsGlobalVoiceSettingsOpen(false)}
+        onClose={() => {
+          setIsGlobalVoiceSettingsOpen(false);
+          setIsSettingsModalOpen(true);
+        }}
       />
 
 
@@ -29308,7 +31983,7 @@ export default function App() {
                           className={cn(
                             "py-1 px-1 rounded-lg font-bold border transition-all text-center truncate",
                             isSelected
-                              ? "bg-slate-900 text-white border-slate-900 shadow-2xs"
+                              ? "bg-emerald-600 text-white border-emerald-600 shadow-2xs"
                               : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
                           )}
                         >
@@ -30323,22 +32998,24 @@ export default function App() {
                     className="w-full pr-9 pl-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
-                <Button
-                  onClick={() => {
-                    setEditingNoteId(null);
-                    setNewNoteTitle('');
-                    setNewNoteContent('');
-                    setNewNoteColor('#ffffff');
-                    setNewNoteTag('');
-                    setNewNoteTaskId('');
-                    setIsAddingNote(true);
-                  }}
-                  variant="primary"
-                  className="bg-red-500 hover:bg-amber-600 text-slate-900 font-bold text-xs gap-1 py-2 w-full sm:w-auto"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>إضافة ملاحظة جديدة</span>
-                </Button>
+                {canManageQuickNotes && (
+                  <Button
+                    onClick={() => {
+                      setEditingNoteId(null);
+                      setNewNoteTitle('');
+                      setNewNoteContent('');
+                      setNewNoteColor('#ffffff');
+                      setNewNoteTag('');
+                      setNewNoteTaskId('');
+                      setIsAddingNote(true);
+                    }}
+                    variant="primary"
+                    className="bg-red-500 hover:bg-amber-600 text-slate-900 font-bold text-xs gap-1 py-2 w-full sm:w-auto"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>إضافة ملاحظة جديدة</span>
+                  </Button>
+                )}
               </div>
 
               {/* Add/Edit Note Form Modal / Drawer */}
@@ -30431,7 +33108,8 @@ export default function App() {
                                 mr.start();
                                 setIsRecordingNoteAudio(true);
                             }).catch(err => {
-                                alert("تعذر الوصول للميكروفون.");
+                                console.warn("Note audio mic access denied:", err);
+                                setIsRecordingNoteAudio(false);
                             });
                         }
                     }} className={cn("p-1.5 rounded-lg transition-colors", isRecordingNoteAudio ? "bg-red-100 text-red-600 animate-pulse" : "hover:bg-slate-100 text-slate-600")} title="تسجيل صوتي مباشر">
@@ -30688,39 +33366,43 @@ export default function App() {
                           >
                             <Share2 className="w-3.5 h-3.5" />
                           </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEditingNoteId(note.id);
-                              setNewNoteTitle(note.title);
-                              setNewNoteContent(note.content);
-                              setNewNoteColor(note.color || '#ffffff');
-                              setNewNoteTag(note.tags?.[0] || '');
-                              setNewNoteTaskId(note.taskId || '');
-                              setNewNoteCustomerId(note.customerId || '');
-                              setNewNoteInventoryId(note.inventoryId || '');
-                              setNewNoteAccountId(note.accountId || '');
-                              setNewNoteMedia(note.media || []);
-                              setNewNoteReminder(note.reminder || '');
-                              setIsAddingNote(true);
-                            }}
-                            className="p-1.5 hover:bg-black/10 rounded-lg"
-                            title="تعديل"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (safeConfirm('هل أنت متأكد من حذف هذه الملاحظة؟')) {
-                                setNotes(notes.filter(n => n.id !== note.id));
-                              }
-                            }}
-                            className="p-1.5 hover:bg-red-500/20 text-red-600 rounded-lg"
-                            title="حذف"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          {canManageQuickNotes && (
+                            <>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingNoteId(note.id);
+                                  setNewNoteTitle(note.title);
+                                  setNewNoteContent(note.content);
+                                  setNewNoteColor(note.color || '#ffffff');
+                                  setNewNoteTag(note.tags?.[0] || '');
+                                  setNewNoteTaskId(note.taskId || '');
+                                  setNewNoteCustomerId(note.customerId || '');
+                                  setNewNoteInventoryId(note.inventoryId || '');
+                                  setNewNoteAccountId(note.accountId || '');
+                                  setNewNoteMedia(note.media || []);
+                                  setNewNoteReminder(note.reminder || '');
+                                  setIsAddingNote(true);
+                                }}
+                                className="p-1.5 hover:bg-black/10 rounded-lg"
+                                title="تعديل"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (safeConfirm('هل أنت متأكد من حذف هذه الملاحظة؟')) {
+                                    setNotes(notes.filter(n => n.id !== note.id));
+                                  }
+                                }}
+                                className="p-1.5 hover:bg-red-500/20 text-red-600 rounded-lg"
+                                title="حذف"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -31108,6 +33790,7 @@ export default function App() {
         onClose={() => setIsCustomerFinancialAccountModalOpen(false)}
         customerName={selectedCustomerForFinancialAccount}
         customers={customers}
+        cashAccounts={cashAccounts}
         tasks={tasks}
         transactions={transactions}
         systemCurrency={systemCurrency}
@@ -31116,12 +33799,7 @@ export default function App() {
         onEditTransaction={handleEditTransaction}
         onAddPaymentToTask={handleOpenAddPaymentDirect}
         onAddTransaction={(type, cName) => {
-          setTransactionType(type);
-          setEditingId(null);
-          setTransactionDescription('');
-          setTransactionCategory('');
-          setTransactionCustomerName(cName);
-          setIsTransactionModalOpen(true);
+          openAddTransactionModal(type, cName);
         }}
         onViewAllCustomerTasks={handleViewCustomerAllTasks}
         onNavigateToAccounts={(cName) => {
@@ -31141,6 +33819,47 @@ export default function App() {
         onClose={() => setIsActivityLoggerSettingsOpen(false)}
         settings={activityLoggerSettings}
         onSave={saveActivityLoggerSettings}
+      />
+
+      <ExitConfirmModal
+        isOpen={isExitConfirmModalOpen}
+        onClose={() => setIsExitConfirmModalOpen(false)}
+        userName={currentUser?.username || 'المستخدم'}
+        onDirectDownloadBackup={() => exportData('json', false)}
+        onDriveBackup={() => exportData('json', 'drive')}
+        onConfirmExit={() => {
+          setIsExitConfirmModalOpen(false);
+          setIsSettingsModalOpen(false);
+          toast.success('تم الخروج بنجاح وحفظ كافة المعاملات والبيانات');
+          import('@capacitor/app').then(m => {
+            m.App.exitApp();
+          }).catch(() => {});
+          if (selectedLoginUser) {
+            setSelectedLoginUser(null);
+            setIsLoginModalOpen(true);
+          }
+        }}
+      />
+
+      <OmniQuickPreviewModal
+        isOpen={isOmniPreviewModalOpen}
+        onClose={() => setIsOmniPreviewModalOpen(false)}
+        tasks={tasks}
+        customers={customers}
+        inventory={inventory}
+        transactions={transactions}
+        cashAccounts={cashAccounts}
+        debtAccounts={debtAccounts}
+        onSelectTask={(tId) => {
+          window.dispatchEvent(new CustomEvent('open-task-id', { detail: { taskId: tId } }));
+        }}
+        onSelectCustomer={(cName) => {
+          setSearchQuery(cName);
+          setCurrentPage('customers');
+        }}
+        onSelectInventoryItem={() => {
+          setCurrentPage('inventory');
+        }}
       />
 
       </div>

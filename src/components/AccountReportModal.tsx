@@ -15,11 +15,15 @@ import {
   ShieldCheck, 
   DollarSign,
   Phone,
-  MapPin
+  MapPin,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { CashAccount, Transaction, Currency, ExchangeRates, Task } from '../types';
 import { cn, formatAmount, convertAndRound, getInUSD } from '../lib/utils';
 import { ExportToolbar } from './ExportToolbar';
+import { VoiceInputButton } from './VoiceInputButton';
+import { Search } from 'lucide-react';
 
 export interface AccountReportModalProps {
   isOpen: boolean;
@@ -57,7 +61,10 @@ export const AccountReportModal: React.FC<AccountReportModalProps> = ({
     return accounts[0]?.id || null;
   });
 
-  const [period, setPeriod] = useState<'all' | 'today' | 'week' | 'month' | 'year' | 'custom'>('month');
+  const [period, setPeriod] = useState<'all' | 'today' | 'week' | 'month' | 'year' | 'custom'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
     d.setDate(1); // 1st of month
@@ -120,6 +127,12 @@ export const AccountReportModal: React.FC<AccountReportModalProps> = ({
       if (t.cashAccountId && accId && t.cashAccountId === accId) {
         return true;
       }
+      if (t.relatedAccountId && accId && t.relatedAccountId === accId) {
+        return true;
+      }
+      if (t.customerName && accName && t.customerName.toLowerCase().trim() === accName) {
+        return true;
+      }
 
       const src = t.sourceAccount?.toLowerCase().trim();
       const dst = t.destinationAccount?.toLowerCase().trim();
@@ -133,32 +146,58 @@ export const AccountReportModal: React.FC<AccountReportModalProps> = ({
       return false;
     });
 
-    matched.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    // 1. Sort ascending from the very first transaction to the last to build the exact chronological running balance
+    const sortedAsc = [...matched].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
+    let running = 0;
     let totalIncome = 0;
     let totalExpense = 0;
 
-    matched.forEach(t => {
+    const enrichedTransactions = sortedAsc.map(t => {
       const amountInSys = convertAndRound(t.amount, t.currency, systemCurrency, exchangeRates);
       if (t.type === 'income') {
         totalIncome += amountInSys;
+        running += amountInSys;
       } else {
         totalExpense += amountInSys;
+        running -= amountInSys;
       }
+      return {
+        ...t,
+        amountInSys,
+        runningBalance: running
+      };
     });
 
     // احتساب الباقي للحساب من ناتج إجمالي ما عليه مطروح منه ما له
     const remainingBalance = totalExpense - totalIncome;
     const netMovement = totalIncome - totalExpense;
 
+    // Display order according to sortOrder (asc = from first to last; desc = from last to first)
+    const ordered = sortOrder === 'desc' ? [...enrichedTransactions].reverse() : enrichedTransactions;
+
+    // Filter by search query (statement, party, amount, date)
+    const finalTransactions = ordered.filter(t => {
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase().trim();
+      return (
+        t.description?.toLowerCase().includes(q) ||
+        t.customerName?.toLowerCase().includes(q) ||
+        t.category?.toLowerCase().includes(q) ||
+        t.amount.toString().includes(q) ||
+        (t.date && t.date.includes(q))
+      );
+    });
+
     return {
-      transactions: matched,
+      transactions: finalTransactions,
+      allEnrichedCount: enrichedTransactions.length,
       totalIncome,
       totalExpense,
       remainingBalance,
       netMovement
     };
-  }, [currentAccount, transactions, period, startDate, endDate, systemCurrency, exchangeRates]);
+  }, [currentAccount, transactions, period, startDate, endDate, sortOrder, searchQuery, systemCurrency, exchangeRates]);
 
   if (!isOpen || !currentAccount) return null;
 
@@ -180,12 +219,12 @@ export const AccountReportModal: React.FC<AccountReportModalProps> = ({
       `📋 تفاصيل الحركات الأخيرة:`,
     ];
 
-    filteredData.transactions.slice(0, 20).forEach((t, i) => {
-      lines.push(`${i + 1}. [${t.date ? t.date.slice(0, 10) : ''}] ${t.type === 'income' ? 'له' : 'عليه'}: ${t.amount} ${t.currency} - ${t.description || t.customerName || 'معاملة'}`);
+    filteredData.transactions.slice(0, 30).forEach((t: any, i) => {
+      lines.push(`${i + 1}. [${t.date ? t.date.slice(0, 10) : ''}] البيان: ${t.description || t.customerName || 'معاملة'} | ${t.type === 'income' ? 'له' : 'عليه'}: ${t.amount} ${t.currency} | المتبقي: ${formatAmount(t.runningBalance, systemCurrency, exchangeRates)} ${systemCurrency}`);
     });
 
-    if (filteredData.transactions.length > 20) {
-      lines.push(`+ و ${filteredData.transactions.length - 20} حركة أخرى مسجلة في السجل.`);
+    if (filteredData.transactions.length > 30) {
+      lines.push(`+ و ${filteredData.transactions.length - 30} حركة أخرى مسجلة في السجل.`);
     }
 
     lines.push(`═══════════════════════════════════════`);
@@ -194,105 +233,169 @@ export const AccountReportModal: React.FC<AccountReportModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
-      <div className="bg-white rounded-3xl max-w-3xl w-full border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto overflow-x-hidden animate-in fade-in duration-200">
+      <div className="bg-white rounded-3xl max-w-3xl w-full border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[92vh] max-w-full">
         {/* Modal Top Header */}
-        <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-emerald-600 rounded-xl">
-              <Building2 className="w-5 h-5 text-white" />
+        <div className="p-3.5 bg-slate-50 border-b border-slate-200 text-slate-800 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-emerald-500/15 text-emerald-700 border border-emerald-500/25 rounded-xl">
+              <Building2 className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-extrabold text-base sm:text-lg">توليد وتصدير تقرير حساب</h3>
-              <p className="text-xs text-slate-300">كشف حساب مالي تفصيلي مع الرصيد والحركات</p>
+              <h3 className="font-extrabold text-sm sm:text-base text-slate-900">توليد وتصدير تقرير حساب</h3>
+              <p className="text-[11px] text-slate-500">كشف حساب مالي تفصيلي مع الرصيد والحركات</p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setIsHeaderCollapsed(!isHeaderCollapsed)}
+              className="px-2.5 py-1.5 bg-slate-200/80 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
+              title={isHeaderCollapsed ? "إظهار خيارات التقرير" : "طي الخيارات لتكبير التقرير"}
+            >
+              {isHeaderCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">{isHeaderCollapsed ? 'إظهار الأدوات' : 'طي الأدوات للمعاينة'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
-        {/* Filter Controls */}
-        <div className="p-4 bg-slate-50 border-b border-slate-200/80 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-            {/* Account Selector */}
-            <div className="space-y-1">
-              <label className="text-xs font-black text-slate-700">اختر الحساب:</label>
-              <select
-                value={currentAccount.id}
-                onChange={(e) => setActiveAccId(Number(e.target.value))}
-                className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                {accounts.map(a => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} ({a.type === 'vault' ? 'خزينة' : a.type === 'bank' ? 'بنك' : a.type === 'wallet' ? 'محفظة' : 'صندوق'})
-                  </option>
-                ))}
-              </select>
+        {/* Filter Controls Container (Collapsible & Shiftable Upwards) */}
+        {!isHeaderCollapsed && (
+          <div className="p-3.5 bg-slate-50 border-b border-slate-200/80 space-y-2.5 transition-all">
+            
+            {/* 1. مربع البحث في رأس القائمة */}
+            <div className="relative flex items-center w-full bg-white border border-slate-200 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-emerald-500 focus-within:border-emerald-500 transition-all shadow-2xs">
+              <Search className="w-4 h-4 text-slate-400 mr-2.5 shrink-0" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="بحث بالصوت أو النص في حركات كشف الحساب والبيان والمبالغ..."
+                className="w-full py-2 px-1 bg-transparent text-xs font-bold text-slate-800 outline-none placeholder:text-slate-400"
+              />
+              <div className="h-full flex items-center shrink-0">
+                <VoiceInputButton
+                  target="account-report-search"
+                  onResult={(text) => {
+                    setSearchQuery(text);
+                  }}
+                  className="px-1 text-slate-400 hover:text-emerald-600 rounded-lg"
+                  buttonTitle="تحويل الكلام إلى نص"
+                />
+                {searchQuery ? (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="h-full aspect-square bg-red-500 hover:bg-red-600 active:bg-red-700 text-white transition-all cursor-pointer flex items-center justify-center shrink-0 font-bold"
+                    title="مسح النص وإلغاء المدخلات بنقرة واحدة"
+                  >
+                    <X className="w-4 h-4 stroke-[3]" />
+                  </button>
+                ) : null}
+              </div>
             </div>
 
-            {/* Period Selector */}
-            <div className="space-y-1">
-              <label className="text-xs font-black text-slate-700">فترة التقرير:</label>
-              <select
-                value={period}
-                onChange={(e) => setPeriod(e.target.value as any)}
-                className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                <option value="today">اليوم</option>
-                <option value="week">هذا الأسبوع</option>
-                <option value="month">هذا الشهر</option>
-                <option value="year">هذا العام</option>
-                <option value="all">كامل الحركات (الكل)</option>
-                <option value="custom">فترة مخصصة</option>
-              </select>
+            {/* 2. الحساب وتسلسل الحركات بصف واحد */}
+            <div className="grid grid-cols-2 gap-2 w-full">
+              {/* Account Selector */}
+              <div className="space-y-0.5 min-w-0">
+                <label className="text-[10px] sm:text-[11px] font-black text-slate-700 block truncate">اختر الحساب:</label>
+                <select
+                  value={currentAccount.id}
+                  onChange={(e) => setActiveAccId(Number(e.target.value))}
+                  className="w-full p-1.5 sm:p-2 bg-white border border-slate-200 rounded-xl text-[10px] sm:text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 truncate"
+                >
+                  {accounts.map(a => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} ({a.type === 'vault' ? 'خزينة' : a.type === 'bank' ? 'بنك' : a.type === 'wallet' ? 'محفظة' : 'صندوق'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Movement Sequence Selector */}
+              <div className="space-y-0.5 min-w-0">
+                <label className="text-[10px] sm:text-[11px] font-black text-slate-700 block truncate">تسلسل الحركات:</label>
+                <select
+                  value={sortOrder}
+                  onChange={(e) => setSortOrder(e.target.value as any)}
+                  className="w-full p-1.5 sm:p-2 bg-white border border-slate-200 rounded-xl text-[10px] sm:text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 truncate"
+                >
+                  <option value="asc">من أول معاملة إلى آخر معاملة</option>
+                  <option value="desc">من الأحدث إلى الأقدم</option>
+                </select>
+              </div>
             </div>
 
-            {/* Custom Dates */}
-            {period === 'custom' && (
-              <div className="grid grid-cols-2 gap-1.5 sm:col-span-2 md:col-span-1">
-                <div className="space-y-0.5">
-                  <label className="text-[10px] font-bold text-slate-500">من تاريخ</label>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full p-1.5 bg-white border border-slate-200 rounded-lg text-xs"
-                  />
+            {/* 3. فترة التقرير بصف واحد مع إمكانية اختيار تاريخ معين */}
+            <div className="flex items-center gap-2 w-full">
+              <div className="space-y-0.5 flex-1 min-w-0">
+                <label className="text-[10px] sm:text-[11px] font-black text-slate-700 block truncate">فترة التقرير:</label>
+                <select
+                  value={period}
+                  onChange={(e) => setPeriod(e.target.value as any)}
+                  className="w-full p-1.5 sm:p-2 bg-white border border-slate-200 rounded-xl text-[10px] sm:text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 truncate"
+                >
+                  <option value="all">كامل الحركات</option>
+                  <option value="today">اليوم</option>
+                  <option value="week">هذا الأسبوع</option>
+                  <option value="month">هذا الشهر</option>
+                  <option value="year">هذا العام</option>
+                  <option value="custom">تاريخ معين (فترة مخصصة)</option>
+                </select>
+              </div>
+
+              {/* Custom Date Pickers in same row */}
+              {period === 'custom' && (
+                <div className="flex items-center gap-1 flex-1 shrink-0">
+                  <div className="space-y-0.5 flex-1 min-w-0">
+                    <label className="text-[8.5px] font-bold text-slate-500 block truncate">من</label>
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="w-full p-1 sm:p-1.5 bg-white border border-slate-200 rounded-xl text-[9.5px] sm:text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <div className="space-y-0.5 flex-1 min-w-0">
+                    <label className="text-[8.5px] font-bold text-slate-500 block truncate">إلى</label>
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="w-full p-1 sm:p-1.5 bg-white border border-slate-200 rounded-xl text-[9.5px] sm:text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
                 </div>
-                <div className="space-y-0.5">
-                  <label className="text-[10px] font-bold text-slate-500">إلى تاريخ</label>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full p-1.5 bg-white border border-slate-200 rounded-lg text-xs"
-                  />
-                </div>
+              )}
+            </div>
+
+            {onOpenInFullReports && (
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenInFullReports(currentAccount.name);
+                    onClose();
+                  }}
+                  className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 cursor-pointer"
+                >
+                  <span>فتح هذا الحساب في مركز التقارير المتقدمة</span>
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                </button>
               </div>
             )}
           </div>
-
-          {onOpenInFullReports && (
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  onOpenInFullReports(currentAccount.name);
-                  onClose();
-                }}
-                className="text-xs font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 cursor-pointer"
-              >
-                <span>فتح هذا الحساب في مركز التقارير المتقدمة</span>
-                <ArrowUpRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
-        </div>
+        )}
 
         {/* 🚀 BANNER: تصدير ومشاركة التقرير المولد (Exact Requested Text and Toolbar) */}
         <div className="flex flex-wrap items-center justify-between gap-3 bg-emerald-50/70 px-4 py-3 border-b border-emerald-100 no-print">
@@ -311,10 +414,10 @@ export const AccountReportModal: React.FC<AccountReportModalProps> = ({
         </div>
 
         {/* Printable & Exportable Report Canvas Area */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 space-y-4 sm:space-y-6">
           <div
             id={targetReportId}
-            className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-5"
+            className="bg-white p-3 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4 sm:space-y-5"
           >
             {/* Header with App Logo, Name, and Account Meta */}
             <div className="flex flex-col items-center justify-center text-center pb-4 border-b border-slate-200 space-y-2">
@@ -351,14 +454,14 @@ export const AccountReportModal: React.FC<AccountReportModalProps> = ({
             {/* Financial Summary Cards for the Account */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               <div className="p-3 bg-red-50 rounded-xl border border-red-100">
-                <p className="text-[10px] font-black text-red-600 uppercase">إجمالي ما عليه (المصروف)</p>
+                <p className="text-[10px] font-black text-red-600 uppercase">إجمالي ما عليه</p>
                 <p className="text-base font-black text-red-800 mt-1">
                   {formatAmount(filteredData.totalExpense, systemCurrency, exchangeRates)} {systemCurrency}
                 </p>
               </div>
 
               <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-100">
-                <p className="text-[10px] font-black text-emerald-600 uppercase">إجمالي ما له (الإيراد)</p>
+                <p className="text-[10px] font-black text-emerald-600 uppercase">إجمالي ما له</p>
                 <p className="text-base font-black text-emerald-800 mt-1">
                   {formatAmount(filteredData.totalIncome, systemCurrency, exchangeRates)} {systemCurrency}
                 </p>
@@ -376,7 +479,7 @@ export const AccountReportModal: React.FC<AccountReportModalProps> = ({
                   "text-[10px] font-black uppercase",
                   filteredData.remainingBalance > 0.01 ? "text-amber-700" : filteredData.remainingBalance < -0.01 ? "text-blue-700" : "text-emerald-700"
                 )}>
-                  {filteredData.remainingBalance > 0.01 ? 'الباقي عليه (مطلوب)' : filteredData.remainingBalance < -0.01 ? 'الباقي له (فائض)' : 'خالص ومصفى'}
+                  {filteredData.remainingBalance > 0.01 ? 'المتبقي عليه' : filteredData.remainingBalance < -0.01 ? 'المتبقي له' : 'خالص ومصفى'}
                 </p>
                 <p className={cn(
                   "text-base font-black mt-1",
@@ -386,43 +489,42 @@ export const AccountReportModal: React.FC<AccountReportModalProps> = ({
                 </p>
               </div>
 
-              <div className="p-3 bg-slate-900 text-white rounded-xl shadow-xs">
-                <p className="text-[10px] font-black text-slate-300 uppercase">الرصيد الدفتري الحالي</p>
-                <p className="text-base font-black text-emerald-400 mt-1">
+              <div className="p-3 bg-emerald-50/80 text-slate-900 border border-emerald-200/90 rounded-xl shadow-2xs">
+                <p className="text-[10px] font-black text-emerald-800 uppercase">الرصيد الحالي</p>
+                <p className="text-base font-black text-emerald-700 mt-1">
                   {formatAmount(currentAccount.balance, currentAccount.currency, exchangeRates)} {currentAccount.currency}
                 </p>
               </div>
             </div>
 
-            {/* Transactions Table */}
+            {/* Transactions Table with Exact Mathematical Running Balance */}
             <div className="border border-slate-200 rounded-xl overflow-hidden">
               <div className="bg-slate-100 px-3 py-2 border-b border-slate-200 flex items-center justify-between">
                 <span className="text-xs font-black text-slate-800">
-                  سجل حركات الحساب ({filteredData.transactions.length})
+                  سجل حركات كشف الحساب المتسلسلة ({filteredData.transactions.length})
                 </span>
-                <span className="text-[10px] text-slate-500 font-bold">انقر على أي صف لمعاينة وتعديل المعاملة</span>
+                <span className="text-[10px] text-slate-500 font-bold">مع البيان والمتبقي التراكمي بعد كل عملية</span>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-right text-xs">
-                  <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+              <div className="w-full overflow-hidden">
+                <table className="w-full text-right text-xs table-fixed mobile-ledger-table">
+                  <thead className="bg-slate-50 text-slate-700 font-black border-b border-slate-200">
                     <tr>
-                      <th className="px-3 py-2">التاريخ</th>
-                      <th className="px-3 py-2">البيان / الوصف</th>
-                      <th className="px-3 py-2">الفئة</th>
-                      <th className="px-3 py-2 text-left">المبلغ</th>
-                      <th className="px-3 py-2 text-center">النوع</th>
+                      <th className="p-2 w-[20%] sm:w-[18%]">التاريخ</th>
+                      <th className="p-2 w-[40%] sm:w-[42%]">البيان</th>
+                      <th className="p-2 w-[20%] text-center">الحركة</th>
+                      <th className="p-2 w-[20%] text-sky-800">المتبقي</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {filteredData.transactions.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="py-8 text-center text-slate-400 font-bold">
+                        <td colSpan={4} className="py-8 text-center text-slate-400 font-bold">
                           لا توجد حركات مسجلة لهذا الحساب في الفترة المحددة
                         </td>
                       </tr>
                     ) : (
-                      filteredData.transactions.map((t) => {
+                      filteredData.transactions.map((t: any) => {
                         const isIncome = t.type === 'income';
                         return (
                           <tr 
@@ -442,32 +544,36 @@ export const AccountReportModal: React.FC<AccountReportModalProps> = ({
                             className="hover:bg-indigo-50/40 transition-colors cursor-pointer"
                             title="انقر لمعاينة وتعديل المعاملة أو المهمة"
                           >
-                            <td className="px-3 py-2 text-slate-500 whitespace-nowrap">
+                            <td className="p-2 text-slate-500 font-mono text-[10px] sm:text-xs align-top">
                               {t.date ? t.date.slice(0, 10) : ''}
                             </td>
-                            <td className="px-3 py-2 font-bold text-slate-800">
-                              {t.description || t.customerName || 'معاملة مالية'}
-                              {t.customerName && t.description && (
-                                <span className="text-[10px] text-slate-400 font-normal mr-1">
-                                  ({t.customerName})
+                            <td className="p-2 text-slate-800 align-top">
+                              <span className="font-extrabold text-slate-950 text-xs sm:text-sm block break-words">
+                                {t.description || (isIncome ? 'إيراد نقدي وارد' : 'مصروف منصرف')}
+                              </span>
+                              {t.customerName && (
+                                <span className="text-[10px] text-sky-800 font-bold bg-sky-50 px-1.5 py-0.5 rounded inline-block mt-0.5 border border-sky-100">
+                                  الطرف: {t.customerName}
                                 </span>
                               )}
                             </td>
-                            <td className="px-3 py-2 text-slate-600">
-                              <span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-bold">
-                                {t.category || (isIncome ? 'وارد' : 'منصرف')}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2 font-black text-left whitespace-nowrap">
-                              {formatAmount(t.amount, t.currency, exchangeRates)} {t.currency}
-                            </td>
-                            <td className="px-3 py-2 text-center">
+                            <td className="p-2 text-center align-top whitespace-nowrap">
                               <span className={cn(
-                                "px-2 py-0.5 rounded-full text-[10px] font-black",
-                                isIncome ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
+                                "font-black text-xs block",
+                                isIncome ? "text-emerald-700" : "text-red-600"
                               )}>
-                                {isIncome ? 'له' : 'عليه'}
+                                {isIncome ? `+${formatAmount(t.amount, t.currency, exchangeRates)}` : `-${formatAmount(t.amount, t.currency, exchangeRates)}`}
                               </span>
+                              <span className={cn(
+                                "text-[9px] font-bold px-1.5 py-0.2 rounded inline-block",
+                                isIncome ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-800"
+                              )}>
+                                {isIncome ? 'له (إيراد)' : 'عليه (صرف)'}
+                              </span>
+                            </td>
+                            <td className="p-2 font-black text-sky-900 whitespace-nowrap bg-sky-50/30 align-top text-left text-[11px]">
+                              {formatAmount(t.runningBalance, systemCurrency, exchangeRates)}
+                              <span className="text-[9px] text-slate-400 block font-normal">{systemCurrency}</span>
                             </td>
                           </tr>
                         );

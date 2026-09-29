@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">الفيصلي</string>
+    <string name="title_activity_main">الفيصلي</string>
+    <string name="package_name">com.faisalysoft.app</string>
+    <string name="custom_url_scheme">com.faisalysoft.app</string>
+</resources>

@@ -23,10 +23,10 @@ export async function getTargetCashAccount(
     return (await db.cashAccounts.get(id)) || null;
   }
 
-  // 1. By explicit cashAccountId
+  // 1. By explicit cashAccountId (prefer liquid account: cashbox, vault, bank, wallet)
   if (trans.cashAccountId) {
     const acc = accounts.find(a => a.id === trans.cashAccountId);
-    if (acc) return acc;
+    if (acc && acc.type !== 'general') return acc;
   }
 
   // 2. By sourceAccount or destinationAccount name/type
@@ -38,18 +38,22 @@ export async function getTargetCashAccount(
       (sName.includes('خزن') && a.type === 'vault') ||
       (sName.includes('صندوق') && a.type === 'cashbox')
     );
-    if (acc) return acc;
+    if (acc && acc.type !== 'general') return acc;
   }
 
-  // 3. By default cash account
-  const defaultAcc = accounts.find(a => a.isDefault);
+  // 3. By default cash account (صندوق النقد اليومي الافتراضي)
+  const defaultAcc = accounts.find(a => a.isDefault && a.type !== 'general');
   if (defaultAcc) return defaultAcc;
 
   // 4. By 'cashbox' type
   const cashboxAcc = accounts.find(a => a.type === 'cashbox');
   if (cashboxAcc) return cashboxAcc;
 
-  // 5. First account available
+  // 5. First liquid account (vault, bank, wallet)
+  const liquidAcc = accounts.find(a => a.type !== 'general');
+  if (liquidAcc) return liquidAcc;
+
+  // 6. First account available
   return accounts[0] || null;
 }
 
@@ -175,6 +179,32 @@ export async function syncTransactionToCashAccount(
     balance: Math.round(newBalance * 100) / 100,
     updatedAt: new Date().toISOString()
   });
+
+  // مزامنة رصيد الحساب المالي المستقل (إن وجد) بشكل منفصل عن الصندوق
+  if (trans.relatedAccountId) {
+    const standaloneAcc = await db.cashAccounts.get(trans.relatedAccountId);
+    if (standaloneAcc && standaloneAcc.id && standaloneAcc.id !== targetAcc.id && standaloneAcc.type === 'general') {
+      const standConverted = convertCurrency(trans.amount, trans.currency || standaloneAcc.currency, standaloneAcc.currency, exchangeRates);
+      let newStandBal = standaloneAcc.balance;
+      if (isReversal) {
+        if (trans.type === 'expense') {
+          newStandBal = Math.max(0, standaloneAcc.balance - standConverted);
+        } else if (trans.type === 'income') {
+          newStandBal = standaloneAcc.balance + standConverted;
+        }
+      } else {
+        if (trans.type === 'expense') {
+          newStandBal = standaloneAcc.balance + standConverted;
+        } else if (trans.type === 'income') {
+          newStandBal = Math.max(0, standaloneAcc.balance - standConverted);
+        }
+      }
+      await db.cashAccounts.update(standaloneAcc.id, {
+        balance: Math.round(newStandBal * 100) / 100,
+        updatedAt: new Date().toISOString()
+      });
+    }
+  }
 }
 
 /**
